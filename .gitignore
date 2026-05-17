@@ -1,0 +1,41 @@
+# Secrets
+.env
+
+# Runtime data
+laptops_database.db
+laptops_database.db-journal
+*.db-shm
+*.db-wal
+top_laptops_*.txt
+*_export.csv
+
+# Caches (regenerated on first run)
+currency_cache.json
+notebookcheck_cache.json
+pricehistory_cache.json
+passmark_cpu.json
+passmark_gpu.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Build
+build/
+dist/
+*.spec.bak
+
+# IDE
+.idea/
+.vscode/
+*.swp
