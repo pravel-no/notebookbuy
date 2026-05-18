@@ -9,8 +9,7 @@ import sqlite3
 import time
 
 import requests
-
-from bs4 import BeautifulSoup # Moved import to top for broader use
+from bs4 import BeautifulSoup  # Moved import to top for broader use
 
 from app_config import ADS_ANALYZE_LIMIT, DB_NAME
 from currency import EUR_TO_MDL, USD_TO_MDL

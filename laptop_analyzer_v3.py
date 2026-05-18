@@ -30,10 +30,10 @@ from scoring import (
     CATEGORY_EMOJI,
     CATEGORY_LABEL,
     MAX_PRICE_MDL,
+    MDL_USD_RATE,  # Import MDL_USD_RATE
     MIN_PRICE_MDL,
     MIN_YEAR,
     score_laptop,
-    MDL_USD_RATE, # Import MDL_USD_RATE
 )
 
 
@@ -60,7 +60,7 @@ def load_components_db():
     global COMPONENTS_DATA
     if not COMPONENTS_DATA: # Load only once
         try:
-            with open(COMPONENTS_DB_FILE, 'r', encoding='utf-8') as f:
+            with open(COMPONENTS_DB_FILE, encoding='utf-8') as f:
                 COMPONENTS_DATA = json.load(f)
             log.info(f"Loaded component data from {COMPONENTS_DB_FILE}")
         except FileNotFoundError:
@@ -255,11 +255,11 @@ class LaptopAnalyzer:
             if dirty:
                 self._save_json_cache(WORLD_PRICE_CACHE, price_cache)
                 self._save_json_cache(NBC_CACHE_FILE, nbc_cache)
-        
+
         # Apply fallback logic for any missing external data
         for lap in processed_laptops:
             lap_id = lap['id']
-            
+
             # Ensure cpu, gpu, ram, ssd are available for fallback functions
             cpu_val = lap.get('cpu', '')
             gpu_val = lap.get('gpu', '')
@@ -272,7 +272,7 @@ class LaptopAnalyzer:
                     cpu_val, gpu_val, ram_val, ssd_val
                 )
                 prices[lap_id] = {"current_usd": estimated_price_mdl / MDL_USD_RATE, "fallback": True}
-            
+
             # Fallback for NBC Score
             if lap_id not in ratings or not ratings[lap_id] or not ratings[lap_id].get('score'):
                 estimated_score = estimate_fallback_score(

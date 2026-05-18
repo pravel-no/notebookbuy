@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import subprocess
 import sys
@@ -13,10 +14,10 @@ from app_config import DB_NAME
 from db import init_database
 from scoring import (
     MAX_PRICE_MDL,
+    MDL_USD_RATE,  # Import MDL_USD_RATE from scoring
     MIN_PRICE_MDL,
     classify_laptop,
     score_laptop,
-    MDL_USD_RATE # Import MDL_USD_RATE from scoring
 )
 
 
@@ -229,10 +230,10 @@ if df_raw.empty:
         st.info("Database exists but no analyzed laptops yet. Run **Run Refresh** to fetch ads and analyze.")
     else:
         st.info("No database yet. Run **Run Refresh** to initialize database and fetch ads.")
-        
+
     region_choice = st.selectbox("Scrape Region", ["Balti", "All of Moldova"], index=0, key="init_region")
     region_arg = "balti" if region_choice == "Balti" else "all"
-    
+
     if st.button("Run Refresh"):
         with st.spinner("Refreshing data..."):
             run_refresh_pipeline(region_arg)
@@ -306,7 +307,7 @@ with st.sidebar:
     st.divider()
     region_choice_sidebar = st.selectbox("Scrape Region", ["Balti", "All of Moldova"], index=0, key="sidebar_region")
     region_arg_sidebar = "balti" if region_choice_sidebar == "Balti" else "all"
-    
+
     if st.button("Run Pipeline Refresh"):
         with st.spinner("Fetching and analyzing ads..."):
             run_refresh_pipeline(region_arg_sidebar)
@@ -523,39 +524,39 @@ def safe_to_float(val, default=0.0):
 
 def get_cpu_tier(cpu_name):
     cpu_str = str(cpu_name).lower()
-    for tier, data in CPU_TIERS.items():
+    for _tier, data in CPU_TIERS.items():
         if any(kw in cpu_str for kw in data['keywords']):
             return data
     return CPU_TIERS['entry']
 
 def get_gpu_tier(gpu_name):
     gpu_str = str(gpu_name).lower()
-    for tier, data in GPU_TIERS.items():
+    for _tier, data in GPU_TIERS.items():
         if any(kw in gpu_str for kw in data['keywords']):
             return data
     return {'price': 0, 'score': 0}
 
 def estimate_fallback_price(cpu, gpu, ram, ssd, brand=""):
     base_chassis_price = 200
-    
+
     # Apple Tax
     if str(brand).lower() == 'apple':
         base_chassis_price += 300
-        
+
     cpu_data = get_cpu_tier(cpu)
     gpu_data = get_gpu_tier(gpu)
-    
+
     ram_gb = safe_to_float(ram)
     ram_gb = min(ram_gb, 16.0) # Limit RAM cost factor
-    
+
     ssd_gb = safe_to_float(ssd)
     if ssd_gb <= 0:
         ssd_gb = 512.0
     ssd_gb = min(ssd_gb, 512.0) # Limit SSD cost factor
-        
+
     ram_price = ram_gb * 4
     ssd_price = (ssd_gb / 128) * 10
-    
+
     total_usd = base_chassis_price + cpu_data['price'] + gpu_data['price'] + ram_price + ssd_price
     return int(total_usd * MDL_USD_RATE)
 
@@ -563,11 +564,11 @@ def estimate_fallback_score(cpu, gpu, ram):
     cpu_data = get_cpu_tier(cpu)
     gpu_data = get_gpu_tier(gpu)
     ram_gb = safe_to_float(ram)
-    
+
     score = cpu_data['score'] + gpu_data['score']
     if ram_gb >= 16:
         score += 3
-        
+
     return int(min(100, max(1, score)))
 
 def is_missing(val):
@@ -582,36 +583,35 @@ for idx, row in display_df.iterrows():
     if is_missing(row.get('NBC Score')):
         fallback_score = estimate_fallback_score(row['cpu'], row['gpu'], row['ram'])
         display_df.at[idx, 'NBC Score'] = f"{fallback_score}%"
-        
+
     if is_missing(row.get('vs World')):
         site_price = safe_to_float(row.get('price'), default=0)
         if site_price > 0:
             calc_price_mdl = estimate_fallback_price(row['cpu'], row['gpu'], row['ram'], row['ssd'], row.get('brand', ''))
             vs_world_percent = ((site_price - calc_price_mdl) / calc_price_mdl) * 100
-            
+
             if vs_world_percent > 0:
                 display_df.at[idx, 'vs World'] = f"+{int(round(vs_world_percent))}%"
             else:
                 display_df.at[idx, 'vs World'] = f"{int(round(vs_world_percent))}%"
 
-import re
 def calculate_risk(row):
     risk = ""
     vs_str = str(row.get('vs World', ''))
     m = re.search(r'([-+]?\d+)', vs_str)
     vs_pct = float(m.group(1)) if m else 0.0
-    
+
     brand = str(row.get('brand', ''))
     price = safe_to_float(row.get('price', 0))
     year = safe_to_float(row.get('year_est', 0))
-    
+
     if brand == 'Apple' and vs_pct < -55:
         risk = "⚠️ Высокий (Скам/Блок)"
     elif brand != 'Apple' and vs_pct < -65:
         risk = "⚠️ Подозрительно дешево"
     elif price < 2000 and year > 2019:
         risk = "⚠️ На запчасти?"
-        
+
     return risk
 
 display_df['Risk'] = display_df.apply(calculate_risk, axis=1)

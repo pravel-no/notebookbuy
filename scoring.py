@@ -106,7 +106,7 @@ def estimate_year_from_cpu(cpu_name: str) -> int | None:
     # Fallback for Celeron/Pentium or unidentifiable CPUs
     if "celeron" in cpu_name or "pentium" in cpu_name:
         return 2019 # General estimate for relevant budget CPUs
-    
+
     # Default to 7 years old if no specific year can be estimated, to apply some age penalty.
     return current_year - 7
 
