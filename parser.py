@@ -97,6 +97,12 @@ class LaptopParser:
         else:
             year_est = LaptopParser.estimate_year(cpu) # Fallback to CPU-based estimation
 
+        if ssd_val == 0 and year_est and year_est >= 2021:
+            if re.search(r'm[1234]', cpu, re.IGNORECASE) or any(w in full_text for w in ['apple', 'macbook']):
+                ssd_val = 256
+            else:
+                ssd_val = 512
+
         return {
             "cpu": cpu,
             "gpu": gpu_match.group(0).strip() if gpu_match else "integrated",
