@@ -263,7 +263,8 @@ def fetch_and_process(region: str = "balti"):  # noqa: C901
                     ("cpu_model_feature", "CPU Model"),
                     ("gpu_model_feature", "GPU Model"),
                     ("ram_size_feature", "RAM Volume"),
-                    ("gpu_type_feature", "GPU Type")
+                    ("gpu_type_feature", "GPU Type"),
+                    ("region_feature", "Region")
                 ]:
                     feat = ad.get(feat_name)
                     if isinstance(feat, dict) and feat.get("value"):
@@ -353,6 +354,10 @@ def fetch_and_process(region: str = "balti"):  # noqa: C901
                                         if link:
                                             spec_tags.append(f"[{label}: {link.get_text(strip=True)}]")
                                             break
+                            # Extract Region from HTML map address if present
+                            div_map = soup.find("div", class_=re.compile(r"styles_map__address", re.IGNORECASE))
+                            if div_map:
+                                spec_tags.append(f"[Region: {div_map.get_text(strip=True)}]")
                             if spec_tags:
                                 body_content = f"{body_content} {' '.join(spec_tags)}"
 

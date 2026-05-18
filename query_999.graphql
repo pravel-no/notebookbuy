@@ -45,6 +45,10 @@ fragment AdListFragment on Advert {
     ...FeatureValueFragment
     __typename
   }
+  region_feature: feature(id: 7) {
+    ...FeatureValueFragment
+    __typename
+  }
   hdd_type_feature: feature(id: 679) {
     ...FeatureValueFragment
     __typename

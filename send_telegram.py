@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -104,6 +105,28 @@ def estimate_fallback_score(cpu, gpu, ram, components_data):
     return int(min(100, max(1, score)))
 
 
+def extract_region(description):
+    if not description:
+        return "Молдова"
+    m = re.search(r'\[region:\s*([^\]]+)\]', description, re.IGNORECASE)
+    if m:
+        val = m.group(1).strip()
+        val_lower = val.lower()
+        if "chișinău" in val_lower or "chisinau" in val_lower or "кишин" in val_lower:
+            return "Кишинёв"
+        elif "bălți" in val_lower or "balti" in val_lower or "бельц" in val_lower:
+            return "Бельцы"
+        return val
+
+    # Fallback search in raw text
+    desc_lower = description.lower()
+    if "бельц" in desc_lower or "bălți" in desc_lower or "balti" in desc_lower or "бэлць" in desc_lower:
+        return "Бельцы"
+    if "кишин" in desc_lower or "chișinău" in desc_lower or "chisinau" in desc_lower:
+        return "Кишинёв"
+    return "Молдова"
+
+
 def process_deals(rows, price_cache, nbc_cache, components_data):
     unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
     shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
@@ -185,7 +208,8 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
                 'ram': r['ram'],
                 'ssd': r['ssd'],
                 'brand': brand,
-                'risk': risk
+                'risk': risk,
+                'region': extract_region(r['description'] if 'description' in r.keys() else '')
             })
     return deals
 
@@ -210,7 +234,7 @@ def main():
     cursor = conn.cursor()
 
     query = """
-        SELECT a.id, a.title, a.price, a.url, c.cpu, c.gpu, c.ram, c.ssd, c.is_broken, c.year_est, c.cpu_score, c.gpu_score
+        SELECT a.id, a.title, a.price, a.url, a.description, c.cpu, c.gpu, c.ram, c.ssd, c.is_broken, c.year_est, c.cpu_score, c.gpu_score
         FROM ads a
         JOIN analysis_cache c ON a.id = c.id
     """
@@ -219,23 +243,28 @@ def main():
 
     deals = process_deals(rows, price_cache, nbc_cache, components_data)
 
-    # Sort deals by value score descending
-    deals.sort(key=lambda x: x['value_score'], reverse=True)
-
     if not deals:
         print("No high-value laptop deals found today.")
         return
 
-    # Select top 5 deals to prevent spam
-    top_deals = deals[:5]
+    # 1. Moldova deals (all regions) - Top 5
+    moldova_deals = sorted(deals, key=lambda x: x['value_score'], reverse=True)[:5]
+
+    # 2. Balti deals - Top 5
+    balti_deals = [d for d in deals if d['region'] == "Бельцы"]
+    balti_deals = sorted(balti_deals, key=lambda x: x['value_score'], reverse=True)[:5]
 
     # Format beautiful message
     message = "🔥 *ТОП ВЫГОДНЫХ НОУТБУКОВ 999.MD* 🔥\n"
     message += f"📅 _Дата отчета: {datetime.now().strftime('%d.%m.%Y %H:%M')}_\n\n"
 
-    for idx, d in enumerate(top_deals, start=1):
+    # Moldova Section
+    message += "🌍 *ВСЯ МОЛДОВА (ТОП-5)*\n"
+    message += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+    for idx, d in enumerate(moldova_deals, start=1):
         brand_emoji = "🍏" if d['brand'] == "Apple" else "💻"
         message += f"{idx}. {brand_emoji} *{d['title']}*\n"
+        message += f" 📍 *Регион:* `{d['region']}`\n"
         message += f" 💰 *Цена:* {d['price']:,} MDL\n"
         message += f" 📈 *Выгода:* `{d['vs_str']} vs World`\n"
         message += f" 🎯 *NBC Score:* `{d['nbc_score']}%` | *Value Score:* `{d['value_score']}`\n"
@@ -243,7 +272,23 @@ def main():
         if d.get('risk'):
             message += f" 🚨 *РИСК:* `{d['risk']}`\n"
         message += f" 🔗 [Открыть объявление]({d['url']})\n\n"
-        message += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+
+    # Balti Section
+    message += "\n🔔 *БЕЛЬЦЫ (ТОП-5)*\n"
+    message += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
+    if balti_deals:
+        for idx, d in enumerate(balti_deals, start=1):
+            brand_emoji = "🍏" if d['brand'] == "Apple" else "💻"
+            message += f"{idx}. {brand_emoji} *{d['title']}*\n"
+            message += f" 💰 *Цена:* {d['price']:,} MDL\n"
+            message += f" 📈 *Выгода:* `{d['vs_str']} vs World`\n"
+            message += f" 🎯 *NBC Score:* `{d['nbc_score']}%` | *Value Score:* `{d['value_score']}`\n"
+            message += f" 🛠 *Характеристики:* `{d['cpu']} | {d['ram']}GB RAM | {d['ssd']}GB SSD`\n"
+            if d.get('risk'):
+                message += f" 🚨 *РИСК:* `{d['risk']}`\n"
+            message += f" 🔗 [Открыть объявление]({d['url']})\n\n"
+    else:
+        message += "   _Выгодных предложений в Бельцах пока не найдено._\n\n"
 
     print("Sending message to Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
