@@ -41,6 +41,10 @@ fragment AdListFragment on Advert {
     ...FeatureValueFragment
     __typename
   }
+  ssd_feature: feature(id: 677) {
+    ...FeatureValueFragment
+    __typename
+  }
   uploadedVideos: feature(id: 2562) {
     ...FeatureValueFragment
     __typename
