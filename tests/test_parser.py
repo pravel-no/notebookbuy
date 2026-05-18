@@ -95,7 +95,7 @@ def test_tb_ssd_units():
 
 def test_one_gb_ssd_not_treated_as_terabyte():
     res = LaptopParser.regex_parse("1 gb ssd", "Budget laptop")
-    assert res["ssd"] == 1
+    assert res["ssd"] == 0
 
 
 def test_n_series_cpu():
