@@ -127,6 +127,18 @@ def extract_region(description):
     return "Молдова"
 
 
+def _get_runtime_ssd(r, brand, title_lower):
+    ssd_val = r['ssd']
+    if ssd_val == 0:
+        year_est = r['year_est'] or (datetime.now().year - 7)
+        if year_est >= 2021:
+            if brand == 'Apple' or any(w in title_lower for w in ['apple', 'macbook']):
+                return 256
+            else:
+                return 512
+    return ssd_val
+
+
 def process_deals(rows, price_cache, nbc_cache, components_data):
     unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
     shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
@@ -195,6 +207,9 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
         elif r['price'] < 2000 and r['year_est'] > 2019:
             risk = "⚠️ На запчасти?"
 
+        # Smart runtime SSD fallback for display/processing
+        ssd_val = _get_runtime_ssd(r, brand, title_lower)
+
         # We want to filter for good value_score
         if value_score >= 100:
             deals.append({
@@ -206,7 +221,7 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
                 'nbc_score': nbc_score,
                 'cpu': r['cpu'],
                 'ram': r['ram'],
-                'ssd': r['ssd'],
+                'ssd': ssd_val,
                 'brand': brand,
                 'risk': risk,
                 'region': extract_region(r['description'] if 'description' in r.keys() else '')
