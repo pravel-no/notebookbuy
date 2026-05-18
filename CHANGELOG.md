@@ -23,4 +23,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GraphQL: use `description: feature(id: 13)` after 999.md removed the `body` field
 - SSD parser: treat explicit `gb` units correctly (e.g. `1 gb ssd` → 1 GB, not 1 TB)
 
-[1.0.0]: https://github.com/pavel/notebookbuy/releases/tag/v1.0.0
+[1.0.0]: https://github.com/pravel-no/notebookbuy/releases/tag/v1.0.0

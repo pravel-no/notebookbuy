@@ -1,41 +1,41 @@
-# Secrets
-.env
-
-# Runtime data
-laptops_database.db
-laptops_database.db-journal
-*.db-shm
-*.db-wal
-top_laptops_*.txt
-*_export.csv
-
-# Caches (regenerated on first run)
-currency_cache.json
-notebookcheck_cache.json
-pricehistory_cache.json
-passmark_cpu.json
-passmark_gpu.json
-
 # Python
 __pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-*.egg-info/
+*.pyc
+*.pyo
+*.pyd
 .venv/
 venv/
 env/
 
-# Build
-build/
-dist/
-*.spec.bak
-
 # IDE
 .idea/
 .vscode/
-*.swp
+
+# Database
+*.db
+laptops_database.db
+
+# Cache files
+*.json
+pricehistory_cache.json
+notebookcheck_cache.json
+passmark_cpu.json
+passmark_gpu.json
+
+# Reports
+*.txt
+*.log
+
+# PyInstaller
+build/
+dist/
+*.spec
+*.exe
+
+# Environment variables
+.env
+
+# Exports
+*_export.csv
+notebookbuy_filtered_deals.csv
+notebookbuy_filtered_deals.json

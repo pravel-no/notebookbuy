@@ -10,6 +10,8 @@ import time
 
 import requests
 
+from bs4 import BeautifulSoup # Moved import to top for broader use
+
 from app_config import ADS_ANALYZE_LIMIT, DB_NAME
 from currency import EUR_TO_MDL, USD_TO_MDL
 from db import init_database
@@ -151,15 +153,20 @@ def save_or_update_ad(cursor, ad_data: dict) -> str:
         return "new"
 
     # Ad already exists — check for meaningful price change (>1% to filter FX noise)
+    # Always update description and image_url, as parsing logic might have improved
     if abs(new_price - old_price) / max(old_price, 1) > 0.01:
         cursor.execute(
-            'UPDATE ads SET price = ?, image_url = ?, parsed_at = ? WHERE id = ?',
-            (new_price, ad_data.get('Изображение'), datetime.datetime.now(), ad_id)
+            'UPDATE ads SET price = ?, description = ?, image_url = ?, parsed_at = ? WHERE id = ?',
+            (new_price, ad_data['HTML_страницы'], ad_data.get('Изображение'), datetime.datetime.now(), ad_id)
         )
         record_price(cursor, ad_id, new_price)
         return "price_drop" if new_price < old_price else "price_rise"
-
-    return "unchanged"
+    else: # Price unchanged or changed insignificantly, but still update description and image
+        cursor.execute(
+            'UPDATE ads SET description = ?, image_url = ?, parsed_at = ? WHERE id = ?',
+            (ad_data['HTML_страницы'], ad_data.get('Изображение'), datetime.datetime.now(), ad_id)
+        )
+        return "unchanged"
 
 
 def _description_from_ad(ad: dict) -> str:
@@ -192,7 +199,7 @@ def get_ad_html(url: str, retries: int = 3) -> str:
 
 
 # ================= 3. MAIN FETCH LOOP =================
-def fetch_and_process():  # noqa: C901
+def fetch_and_process(region: str = "balti"):  # noqa: C901
     """Fetch all laptop ads from 999.md and upsert them into the local database."""
     log.info("Checking for new/updated ads...")
 
@@ -211,7 +218,7 @@ def fetch_and_process():  # noqa: C901
             "source": "AD_SOURCE_DESKTOP_REDESIGN",
             "filters": [
                 {"filterId": 290, "features": [{"featureId": 7, "optionIds": [12912]}]}
-            ],
+            ] if region == "balti" else [],
             "pagination": {"limit": ADS_TO_DOWNLOAD, "skip": 0},
             "subCategoryId": 4
         }
@@ -281,17 +288,39 @@ def fetch_and_process():  # noqa: C901
                 if not body_content and (old_price is None or abs(price - old_price) / max(old_price, 1) > 0.01):
                     raw_html = get_ad_html(ad_url)
                     if raw_html:
-                        from bs4 import BeautifulSoup
                         try:
                             soup = BeautifulSoup(raw_html, "html.parser")
                             desc_div = soup.find(itemprop="description")
                             if desc_div:
-                                body_content = desc_div.get_text(" ").strip()
+                                body_content = desc_div.get_text(" ", strip=True)
                             else:
-                                # Fallback: clean raw text of entire page
-                                body_content = soup.get_text(" ").strip()
-                        except Exception:
-                            body_content = raw_html
+                                # Try to find a specific description container on 999.md
+                                # Common class names for main description content
+                                description_container = soup.find('div', class_='styles_description__body__qh1qw') or \
+                                                        soup.find('div', class_='ad-description') or \
+                                                        soup.find('div', class_='description-text') or \
+                                                        soup.find('div', class_='description-body')
+
+                                if description_container:
+                                    body_content = description_container.get_text(" ", strip=True)
+                                else:
+                                    # Fallback: more robust text extraction (previous logic)
+                                    # Remove script, style, header, nav, footer, aside elements
+                                    for unwanted_tag in soup(["script", "style", "header", "nav", "footer", "aside"]):
+                                        unwanted_tag.extract()
+
+                                    # Try to find a common main content container
+                                    main_content = soup.find('main') or soup.find('article') or soup.find('div', class_=re.compile(r'content|description|body', re.IGNORECASE))
+
+                                    if main_content:
+                                        body_content = main_content.get_text(" ", strip=True)
+                                    else:
+                                        # If no specific main content, get text from body after cleaning
+                                        body_content = soup.body.get_text(" ", strip=True) if soup.body else ""
+
+                        except Exception as e:
+                            log.warning(f"Error parsing HTML for {ad_url}: {e}")
+                            body_content = raw_html # Fallback to raw HTML if parsing fails
 
                 ad_data = {
                     'ID': ad_id, 'Заголовок': title, 'Цена': price,
@@ -336,18 +365,19 @@ def main():
     parser = argparse.ArgumentParser(description="Fetch laptop ads from 999.md")
     parser.add_argument("--once", action="store_true", help="Run one fetch cycle and exit")
     parser.add_argument("--interval", type=int, default=CHECK_INTERVAL, help="Polling interval in seconds")
+    parser.add_argument("--region", type=str, choices=["balti", "all"], default="balti", help="Region to search (balti or all)")
     args = parser.parse_args()
 
     init_database(DB_NAME)
     log.info("999.md parser started")
-    log.info(f"Database: {DB_NAME} | Interval: {args.interval // 60} min")
+    log.info(f"Database: {DB_NAME} | Interval: {args.interval // 60} min | Region: {args.region}")
 
     if args.once:
-        fetch_and_process()
+        fetch_and_process(region=args.region)
         return
 
     while True:
-        fetch_and_process()
+        fetch_and_process(region=args.region)
         log.info(f"Next check in {args.interval // 60} min...")
         time.sleep(args.interval)
 

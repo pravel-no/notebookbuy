@@ -10,13 +10,13 @@ import streamlit as st
 from bs4 import BeautifulSoup
 
 from app_config import DB_NAME
-from currency import USD_TO_MDL
 from db import init_database
 from scoring import (
     MAX_PRICE_MDL,
     MIN_PRICE_MDL,
     classify_laptop,
     score_laptop,
+    MDL_USD_RATE # Import MDL_USD_RATE from scoring
 )
 
 
@@ -30,43 +30,44 @@ st.markdown("""
 <style>
     /* Styling for Streamlit elements */
     .stApp {
-        background: linear-gradient(135deg, #090d16 0%, #111827 100%);
-        color: #f3f4f6;
+        background: linear-gradient(135deg, #f0f2f6 0%, #e0e2e6 100%); /* Light background */
+        color: #333333; /* Darker text for contrast */
     }
 
     /* Premium Title and Headers */
     h1, h2, h3 {
-        color: #818cf8 !important;
+        color: #4f46e5 !important; /* A vibrant but not too dark blue */
         font-family: 'Outfit', 'Inter', sans-serif !important;
         font-weight: 700 !important;
-        text-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+        text-shadow: 0 0 5px rgba(79, 70, 229, 0.1);
     }
 
     /* Sidebar */
     [data-testid="stSidebar"] {
-        background-color: #070a12 !important;
-        border-right: 1px solid #1e293b;
+        background-color: #ffffff !important; /* White sidebar */
+        border-right: 1px solid #cccccc; /* Light border */
+        color: #333333;
     }
 
     /* Metrics panel custom premium design */
     div[data-testid="metric-container"] {
-        background: rgba(17, 24, 39, 0.6);
-        border: 1px solid rgba(99, 102, 241, 0.2);
+        background: rgba(255, 255, 255, 0.8); /* Light background for metrics */
+        border: 1px solid rgba(79, 70, 229, 0.2); /* Blue border */
         padding: 20px;
         border-radius: 12px;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); /* Lighter shadow */
         transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
     }
 
     div[data-testid="metric-container"]:hover {
         transform: translateY(-2px);
-        border-color: rgba(99, 102, 241, 0.6);
-        box-shadow: 0 0 15px rgba(99, 102, 241, 0.15);
+        border-color: rgba(79, 70, 229, 0.6); /* More vibrant blue on hover */
+        box_shadow: 0 0 10px rgba(79, 70, 229, 0.15); /* Lighter hover shadow */
     }
 
     /* Custom Styling for Buttons */
     div.stButton > button {
-        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important;
+        background: linear-gradient(135deg, #6366f1 0%, #4f46e5 100%) !important; /* Keep vibrant blue */
         color: white !important;
         font-weight: bold !important;
         border: none !important;
@@ -77,7 +78,31 @@ st.markdown("""
 
     div.stButton > button:hover {
         transform: scale(1.02);
-        box-shadow: 0 0 20px rgba(99, 102, 241, 0.6);
+        box_shadow: 0 0 15px rgba(79, 70, 229, 0.4); /* Lighter hover shadow */
+    }
+
+    /* Adjust text input and select box for light theme */
+    .stTextInput > div > div > input, .stSelectbox > div > div > div > div {
+        background-color: #ffffff;
+        color: #333333;
+        border: 1px solid #cccccc;
+    }
+    .stTextInput > label, .stSelectbox > label, .stMultiSelect > label, .stSlider > label, .stCheckbox > label {
+        color: #333333;
+    }
+    .stMultiSelect > div > div {
+        background-color: #ffffff;
+        border: 1px solid #cccccc;
+    }
+    .stMultiSelect > div > div > div > span {
+        color: #333333;
+    }
+    .stMultiSelect > div > div > div > div > div {
+        background-color: #e0e0e0;
+        color: #333333;
+    }
+    .stMultiSelect > div > div > div > div > div > svg {
+        color: #333333;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -151,9 +176,9 @@ def run_command(args: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(args, capture_output=True, text=True, timeout=900)
 
 
-def run_refresh_pipeline() -> None:
+def run_refresh_pipeline(region: str = "balti") -> None:
     steps = [
-        ("Fetching latest ads", [sys.executable, "lappars.py", "--once"]),
+        ("Fetching latest ads", [sys.executable, "lappars.py", "--once", "--region", region]),
         ("Analyzing specs and scores", [sys.executable, "laptop_analyzer_v3.py"]),
     ]
 
@@ -204,16 +229,39 @@ if df_raw.empty:
         st.info("Database exists but no analyzed laptops yet. Run **Run Refresh** to fetch ads and analyze.")
     else:
         st.info("No database yet. Run **Run Refresh** to initialize database and fetch ads.")
+        
+    region_choice = st.selectbox("Scrape Region", ["Balti", "All of Moldova"], index=0, key="init_region")
+    region_arg = "balti" if region_choice == "Balti" else "all"
+    
     if st.button("Run Refresh"):
         with st.spinner("Refreshing data..."):
-            run_refresh_pipeline()
+            run_refresh_pipeline(region_arg)
     st.stop()
 
 # Data Transformations & Filter Extras
+# Clean up unwanted ads (scam / buying / broken)
+unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
+def is_clean(title):
+    title_lower = str(title).lower()
+    return not any(kw in title_lower for kw in unwanted_keywords)
+
+df_raw = df_raw[df_raw['title'].apply(is_clean)]
+
 df = apply_scoring(df_raw)
+df = df.drop_duplicates(subset=['url'], keep='last')
 price_cache, nbc_cache = load_external_data()
 
 df["brand"] = df["title"].apply(extract_brand)
+
+# Smart Brand Normalization
+def fix_apple_brand(row):
+    title_lower = str(row['title']).lower()
+    if any(w in title_lower for w in ['mackbook', 'macbook', 'apple', 'mac']):
+        row['brand'] = 'Apple'
+        row['category'] = 'MacBook'
+    return row
+
+df = df.apply(fix_apple_brand, axis=1)
 df["cpu_brand"] = df["cpu"].apply(extract_cpu_brand)
 
 # Sidebar Filters
@@ -256,9 +304,12 @@ with st.sidebar:
     include_broken = st.checkbox("Include Broken/Spare Parts", value=False)
 
     st.divider()
+    region_choice_sidebar = st.selectbox("Scrape Region", ["Balti", "All of Moldova"], index=0, key="sidebar_region")
+    region_arg_sidebar = "balti" if region_choice_sidebar == "Balti" else "all"
+    
     if st.button("Run Pipeline Refresh"):
         with st.spinner("Fetching and analyzing ads..."):
-            run_refresh_pipeline()
+            run_refresh_pipeline(region_arg_sidebar)
 
 # Filtering logic
 mask = (
@@ -310,11 +361,11 @@ fig.add_hline(y=median_pts, line_dash="dash", line_color="#3b82f6", annotation_t
 fig.add_vline(x=median_price, line_dash="dash", line_color="#ef4444", annotation_text="Median Price", annotation_position="top right")
 
 fig.update_layout(
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    font_color="#f1f5f9",
-    xaxis=dict(showgrid=True, gridcolor="#1e293b"),
-    yaxis=dict(showgrid=True, gridcolor="#1e293b")
+    paper_bgcolor="rgba(0,0,0,0)", # Transparent background
+    plot_bgcolor="rgba(0,0,0,0)", # Transparent background
+    font_color="#333333", # Darker font for light theme
+    xaxis=dict(showgrid=True, gridcolor="#e0e0e0"), # Lighter grid lines
+    yaxis=dict(showgrid=True, gridcolor="#e0e0e0") # Lighter grid lines
 )
 st.plotly_chart(fig, use_container_width=True)
 
@@ -375,11 +426,11 @@ if selected_id:
                 )
                 fig_hist.update_traces(line_color="#6366f1", marker=dict(size=8, color="#4f46e5"))
                 fig_hist.update_layout(
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                    font_color="#f1f5f9",
+                    paper_bgcolor="rgba(0,0,0,0)", # Transparent background
+                    plot_bgcolor="rgba(0,0,0,0)", # Transparent background
+                    font_color="#333333", # Darker font for light theme
                     xaxis=dict(showgrid=False),
-                    yaxis=dict(showgrid=True, gridcolor="#1e293b")
+                    yaxis=dict(showgrid=True, gridcolor="#e0e0e0") # Lighter grid lines
                 )
                 st.plotly_chart(fig_hist, use_container_width=True)
 
@@ -406,26 +457,179 @@ def get_external_info(row):
 
     vs_pct = "—"
     if wp.get('current_usd'):
-        world_mdl = wp['current_usd'] * USD_TO_MDL
+        world_mdl = wp['current_usd'] * MDL_USD_RATE # Use MDL_USD_RATE
         diff = (row['price'] - world_mdl) / world_mdl * 100
         vs_pct = f"{diff:+.0f}%"
 
     score = f"{nbc.get('score')}%" if nbc.get('score') else "—"
     return pd.Series([vs_pct, score], index=["vs World", "NBC Score"])
 
+# --- Fallback Logic Start ---
+CPU_TIERS = {
+    'premium': {
+        'keywords': ['core ultra 7', 'core ultra 9', 'i9', 'ryzen 9', 'm3 pro', 'm2 pro', 'm3 max', 'm2 max'],
+        'price': 500,
+        'score': 90
+    },
+    'high': {
+        'keywords': ['i7', 'ryzen 7', 'core ultra 5', 'm1 pro', 'm1 max', 'm2', 'm3'],
+        'price': 350,
+        'score': 80
+    },
+    'mid': {
+        'keywords': ['i5', 'ryzen 5', 'm1'],
+        'price': 200,
+        'score': 70
+    },
+    'entry': {
+        'keywords': ['i3', 'ryzen 3'],
+        'price': 100,
+        'score': 55
+    },
+    'low': {
+        'keywords': ['celeron', 'pentium', 'athlon'],
+        'price': 40,
+        'score': 35
+    }
+}
+
+GPU_TIERS = {
+    'high': {
+        'keywords': ['rtx 4090', 'rtx 4080', 'rtx 4070', 'rtx 3080', 'rtx 3080 ti', 'rtx 3070', 'rtx 3070 ti', 'rx 7800', 'rx 7900'],
+        'price': 600,
+        'score': 10
+    },
+    'mid': {
+        'keywords': ['rtx 4060', 'rtx 4050', 'rtx 3060', 'rtx 3050', 'rx 7600', 'rx 6600'],
+        'price': 300,
+        'score': 5
+    },
+    'entry': {
+        'keywords': ['gtx 1650', 'rtx 2050', 'mx450', 'mx550', 'gtx 1660'],
+        'price': 100,
+        'score': 2
+    }
+}
+
+def safe_to_float(val, default=0.0):
+    try:
+        if pd.isna(val) or val == '' or val == '—':
+            return default
+        # Remove any non-numeric characters just in case
+        val_str = str(val).replace('%', '').replace('+', '').strip()
+        return float(val_str)
+    except (ValueError, TypeError):
+        return default
+
+def get_cpu_tier(cpu_name):
+    cpu_str = str(cpu_name).lower()
+    for tier, data in CPU_TIERS.items():
+        if any(kw in cpu_str for kw in data['keywords']):
+            return data
+    return CPU_TIERS['entry']
+
+def get_gpu_tier(gpu_name):
+    gpu_str = str(gpu_name).lower()
+    for tier, data in GPU_TIERS.items():
+        if any(kw in gpu_str for kw in data['keywords']):
+            return data
+    return {'price': 0, 'score': 0}
+
+def estimate_fallback_price(cpu, gpu, ram, ssd, brand=""):
+    base_chassis_price = 200
+    
+    # Apple Tax
+    if str(brand).lower() == 'apple':
+        base_chassis_price += 300
+        
+    cpu_data = get_cpu_tier(cpu)
+    gpu_data = get_gpu_tier(gpu)
+    
+    ram_gb = safe_to_float(ram)
+    ram_gb = min(ram_gb, 16.0) # Limit RAM cost factor
+    
+    ssd_gb = safe_to_float(ssd)
+    if ssd_gb <= 0:
+        ssd_gb = 512.0
+    ssd_gb = min(ssd_gb, 512.0) # Limit SSD cost factor
+        
+    ram_price = ram_gb * 4
+    ssd_price = (ssd_gb / 128) * 10
+    
+    total_usd = base_chassis_price + cpu_data['price'] + gpu_data['price'] + ram_price + ssd_price
+    return int(total_usd * MDL_USD_RATE)
+
+def estimate_fallback_score(cpu, gpu, ram):
+    cpu_data = get_cpu_tier(cpu)
+    gpu_data = get_gpu_tier(gpu)
+    ram_gb = safe_to_float(ram)
+    
+    score = cpu_data['score'] + gpu_data['score']
+    if ram_gb >= 16:
+        score += 3
+        
+    return int(min(100, max(1, score)))
+
+def is_missing(val):
+    return pd.isna(val) or val == '—' or val == ''
+# --- Fallback Logic End ---
+
 ext_df = filtered_df.apply(get_external_info, axis=1)
 display_df = pd.concat([filtered_df, ext_df], axis=1)
 
-cols = ["value_score", "price", "vs World", "NBC Score", "category", "brand", "cpu", "gpu", "ram", "ssd", "year_est", "url", "title"]
+# Apply fallback logic
+for idx, row in display_df.iterrows():
+    if is_missing(row.get('NBC Score')):
+        fallback_score = estimate_fallback_score(row['cpu'], row['gpu'], row['ram'])
+        display_df.at[idx, 'NBC Score'] = f"{fallback_score}%"
+        
+    if is_missing(row.get('vs World')):
+        site_price = safe_to_float(row.get('price'), default=0)
+        if site_price > 0:
+            calc_price_mdl = estimate_fallback_price(row['cpu'], row['gpu'], row['ram'], row['ssd'], row.get('brand', ''))
+            vs_world_percent = ((site_price - calc_price_mdl) / calc_price_mdl) * 100
+            
+            if vs_world_percent > 0:
+                display_df.at[idx, 'vs World'] = f"+{int(round(vs_world_percent))}%"
+            else:
+                display_df.at[idx, 'vs World'] = f"{int(round(vs_world_percent))}%"
+
+import re
+def calculate_risk(row):
+    risk = ""
+    vs_str = str(row.get('vs World', ''))
+    m = re.search(r'([-+]?\d+)', vs_str)
+    vs_pct = float(m.group(1)) if m else 0.0
+    
+    brand = str(row.get('brand', ''))
+    price = safe_to_float(row.get('price', 0))
+    year = safe_to_float(row.get('year_est', 0))
+    
+    if brand == 'Apple' and vs_pct < -55:
+        risk = "⚠️ Высокий (Скам/Блок)"
+    elif brand != 'Apple' and vs_pct < -65:
+        risk = "⚠️ Подозрительно дешево"
+    elif price < 2000 and year > 2019:
+        risk = "⚠️ На запчасти?"
+        
+    return risk
+
+display_df['Risk'] = display_df.apply(calculate_risk, axis=1)
+
+cols = ["value_score", "price", "vs World", "Risk", "NBC Score", "category", "brand", "cpu", "gpu", "ram", "ssd", "year_est", "url", "title"]
 display_df = display_df[cols].copy()
-display_df["value_score"] = display_df["value_score"].map("{:,.1f}".format)
+
+# Apply rounding and type conversion for price
+display_df["price"] = display_df["price"].round(0).astype(int)
+# Round value_score to 1 decimal place
+display_df["value_score"] = display_df["value_score"].round(1)
 
 st.dataframe(
     display_df,
     column_config={
         "url": st.column_config.LinkColumn("Ad Link"),
         "price": st.column_config.NumberColumn("Price (MDL)", format="%d"),
-        "value_score": st.column_config.TextColumn("Value Score"),
+        "value_score": st.column_config.NumberColumn("Value Score", format="%.1f"),
         "year_est": st.column_config.NumberColumn("Year", format="%d"),
         "NBC Score": st.column_config.TextColumn("NBC %"),
     },
@@ -438,7 +642,7 @@ st.divider()
 st.subheader("📥 Export Filtered Deals")
 c_exp1, c_exp2 = st.columns(2)
 with c_exp1:
-    csv_data = filtered_df.to_csv(index=False).encode('utf-8')
+    csv_data = display_df.to_csv(index=False).encode('utf-8')
     st.download_button(
         "Download CSV File",
         data=csv_data,
@@ -446,7 +650,7 @@ with c_exp1:
         mime="text/csv"
     )
 with c_exp2:
-    json_data = filtered_df.to_json(orient='records', indent=2).encode('utf-8')
+    json_data = display_df.to_json(orient='records', indent=2).encode('utf-8')
     st.download_button(
         "Download JSON File",
         data=json_data,

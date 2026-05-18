@@ -17,7 +17,7 @@ CPU_REGEX = re.compile(
     r'|core\s+ultra\s+[3579]\s+\d{3,5}[hxug]?'     # Intel Core Ultra 7 155H
     r'|ryzen\s+[3579]\s+\d{4}[hxusg]{0,3}'         # AMD Ryzen 7 5800H
     r'|snapdragon\s*(?:x|8[a-z0-9]*)'              # Snapdragon X Elite, 8cx
-    r'|(?:apple\s+)?m[1234]\s*(?:pro|max|ultra)?'  # Apple M1, M2 Pro, M3 Max
+    r'|m[1234]\s*(?:pro|max|ultra)?'               # Apple M1, M2 Pro, M3 Max (will be post-processed for brand)
     r'|celeron\s*(?:gold|silver)?\s*[a-z0-9]+'     # Intel Celeron N4020
     r'|pentium\s*(?:gold|silver)?\s*[a-z0-9]+'     # Intel Pentium Gold 7505
     r'|xeon\s*[a-z0-9-]+'                          # Intel Xeon E3-1535M
@@ -38,8 +38,9 @@ GPU_REGEX = re.compile(
     r')\b'
 )
 
-RAM_REGEX = re.compile(r'\b(4|6|8|12|16|24|32|48|64|128)\s*(?:gb|гб)\b')
-SSD_REGEX = re.compile(r'\b(128|256|512|1000|1024|2048|1|2)\s*(tb|тб|gb|гб)?\s*(?:ssd|nvme|hdd|ссд)\b')
+RAM_REGEX = re.compile(r'\b(4|6|8|12|16|24|32|48|64|128)\s*(?:gb|гб|g)\b')
+SSD_REGEX = re.compile(r'\b(128|256|500|512|1000|1024|2000|2048|1|2|4)\s*(?:tb|тб|gb|гб|t|g)?\s*(?:ssd|nvme|hdd|ссд|m\.2|pcie)\b')
+YEAR_REGEX = re.compile(r'\b(20(?:0[8-9]|1[0-9]|2[0-5]))\b') # Years from 2008 to 2025
 
 
 class LaptopParser:
@@ -63,31 +64,54 @@ class LaptopParser:
         gpu_match = GPU_REGEX.search(full_text)
         ram_match = RAM_REGEX.search(full_text)
         ssd_match = SSD_REGEX.search(full_text)
+        year_match = YEAR_REGEX.search(full_text) # Search for explicit year
 
         cpu = cpu_match.group(0).strip() if cpu_match else ""
+
+        # Post-processing for Apple M-series to prevent hallucinations
+        if re.search(r'm[1234]', cpu, re.IGNORECASE): # If an M-series CPU was detected
+            # Check if "apple" or "macbook" is present in the full text
+            if not re.search(r'(?:apple|macbook)', full_text):
+                cpu = "" # Discard the M-series CPU match if not an Apple product
 
         # Format/Clean SSD size
         ssd_val = 0
         if ssd_match:
             try:
-                num = int(re.sub(r'[^0-9]', '', ssd_match.group(1)))
-                unit = ssd_match.group(2)
-                if unit in ('tb', 'тб'):
+                num_str = re.search(r'\d+', ssd_match.group(0)).group(0)
+                num = int(num_str)
+                unit_match = re.search(r'(tb|тб|gb|гб|t|g)', ssd_match.group(0))
+                unit = unit_match.group(1) if unit_match else None
+
+                if unit in ('tb', 'тб', 't'):
                     ssd_val = num * 1024
-                elif unit in ('gb', 'гб'):
+                elif unit in ('gb', 'гб', 'g'):
                     ssd_val = num
-                elif num in (1, 2):  # "1 ssd" without unit — usually 1–2 TB
+                elif num in (1, 2, 4) and any(x in ssd_match.group(0) for x in ['ssd', 'nvme', 'm.2']): # "1 ssd" without unit -> assume TB
                     ssd_val = num * 1024
-                else:
-                    ssd_val = num
+                else: # Fallback for numbers without clear units, assume GB if reasonable
+                    if num > 10 and num < 4000: # e.g. "512 ssd"
+                        ssd_val = num
+                    elif num <= 4: # e.g. "4tb ssd" but unit not caught
+                        ssd_val = num * 1024
             except Exception:
                 ssd_val = 0
+
+        year_est = None
+        if year_match:
+            year_est = int(year_match.group(1))
+        else:
+            year_est = LaptopParser.estimate_year(cpu) # Fallback to CPU-based estimation
 
         return {
             "cpu": cpu,
             "gpu": gpu_match.group(0).strip() if gpu_match else "integrated",
             "ram": int(ram_match.group(1)) if ram_match else 0,
             "ssd": ssd_val,
-            "is_broken": any(k in full_text for k in ["запчаст", "дефект", "не работ", "разбит экран", "треснут экран", "битый экран", "экран не работ", "не включ"]),
-            "year_est": LaptopParser.estimate_year(cpu)
+            "is_broken": any(k in full_text for k in [
+                "запчаст", "дефект", "не работ", "разбит экран", "треснут экран", "битый экран", "экран не работ",
+                "не включ", "schimb", "piese", "defect", "parola", "blocat", "заблокирован", "на запчасти",
+                "без торга", "срочно", "продам срочно", "urgent"
+            ]),
+            "year_est": year_est
         }

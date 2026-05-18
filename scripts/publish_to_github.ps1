@@ -20,8 +20,9 @@ Write-Host "GitHub user: $login"
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
 
-if ($login -ne "pavel") {
-    Write-Warning "README/pyproject URLs use github.com/pavel/notebookbuy — update if your login is '$login'."
+$expectedOwner = "pravel-no"
+if ($login -ne $expectedOwner) {
+    Write-Warning -Message "Docs use github.com/$expectedOwner/notebookbuy but you are logged in as $login."
 }
 
 $remoteUrl = "https://github.com/$login/notebookbuy.git"
@@ -32,7 +33,7 @@ $exists = & $gh repo view "$login/notebookbuy" 2>$null
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Creating public repository $login/notebookbuy ..."
     & $gh repo create notebookbuy --public `
-        --description "Find the best laptop deals on 999.md — scrape, benchmark, score, visualize." `
+        --description "Find the best laptop deals on 999.md - scrape, benchmark, score, visualize." `
         --source . --remote origin --push
 } else {
     Write-Host "Repository exists. Pushing main and tags ..."

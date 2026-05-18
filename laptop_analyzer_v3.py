@@ -23,7 +23,6 @@ from app_config import (
     WORLD_PRICE_TOP_N,
 )
 from benchmarks import HardwareBenchmarker
-from currency import USD_TO_MDL
 from db import init_database
 from parser import LaptopParser
 from scoring import (
@@ -34,12 +33,14 @@ from scoring import (
     MIN_PRICE_MDL,
     MIN_YEAR,
     score_laptop,
+    MDL_USD_RATE, # Import MDL_USD_RATE
 )
 
 
 # ================= 1. CONFIGURATION =================
 WORLD_PRICE_CACHE = "pricehistory_cache.json"
 NBC_CACHE_FILE = "notebookcheck_cache.json"
+COMPONENTS_DB_FILE = "components_db.json" # New: Define components DB file
 
 if not GEMINI_API_KEY:
     logging.warning("GEMINI_API_KEY is not set — AI extraction and external lookups will be skipped")
@@ -51,7 +52,105 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# ================= 2. DATABASE MANAGER =================
+# Global variable to store loaded components data
+COMPONENTS_DATA = {}
+
+def load_components_db():
+    """Loads component pricing and scoring data from components_db.json."""
+    global COMPONENTS_DATA
+    if not COMPONENTS_DATA: # Load only once
+        try:
+            with open(COMPONENTS_DB_FILE, 'r', encoding='utf-8') as f:
+                COMPONENTS_DATA = json.load(f)
+            log.info(f"Loaded component data from {COMPONENTS_DB_FILE}")
+        except FileNotFoundError:
+            log.error(f"Error: {COMPONENTS_DB_FILE} not found. Fallback estimation will not work correctly.")
+            COMPONENTS_DATA = {}
+        except json.JSONDecodeError as e:
+            log.error(f"Error decoding JSON from {COMPONENTS_DB_FILE}: {e}. Fallback estimation will not work correctly.")
+            COMPONENTS_DATA = {}
+
+# Call this once at startup
+load_components_db()
+
+
+# ================= 2. FALLBACK ESTIMATION FUNCTIONS =================
+
+def estimate_fallback_price(cpu: str, gpu: str, ram: int, ssd: int) -> int:
+    """
+    Estimates a synthetic world price in MDL based on extracted components
+    using data from COMPONENTS_DATA.
+    """
+    if not COMPONENTS_DATA:
+        return 0 # Cannot estimate without data
+
+    base_chassis_price_usd = COMPONENTS_DATA.get("base_laptop_price", 200)
+    estimated_price_usd = base_chassis_price_usd
+
+    cpu_lower = cpu.lower()
+    cpu_tiers = COMPONENTS_DATA.get("cpu_tiers", {})
+    # Sort CPU tiers by keyword length in descending order to prioritize more specific matches
+    sorted_cpu_keywords = sorted(cpu_tiers.keys(), key=len, reverse=True)
+
+    for keyword in sorted_cpu_keywords:
+        if keyword in cpu_lower:
+            estimated_price_usd += cpu_tiers[keyword].get("price", 0)
+            break
+
+    gpu_lower = gpu.lower()
+    gpu_tiers = COMPONENTS_DATA.get("gpu_tiers", {})
+    # Sort GPU tiers by keyword length in descending order to prioritize more specific matches
+    sorted_gpu_keywords = sorted(gpu_tiers.keys(), key=len, reverse=True)
+
+    for keyword in sorted_gpu_keywords:
+        if keyword in gpu_lower:
+            estimated_price_usd += gpu_tiers[keyword].get("price", 0)
+            break
+
+    # RAM cost
+    estimated_price_usd += ram * 4
+
+    # SSD cost (if ssd == 0, treat as 512GB for calculation to avoid skew)
+    ssd_calc_gb = ssd if ssd > 0 else 512
+    estimated_price_usd += (ssd_calc_gb / 128) * 10
+
+    return int(estimated_price_usd * MDL_USD_RATE)
+
+def estimate_fallback_score(cpu: str, gpu: str, ram: int) -> int:
+    """
+    Estimates a synthetic performance score (1-100) based on extracted components
+    using data from COMPONENTS_DATA.
+    """
+    if not COMPONENTS_DATA:
+        return 0 # Cannot estimate without data
+
+    score = 0
+
+    cpu_lower = cpu.lower()
+    cpu_tiers = COMPONENTS_DATA.get("cpu_tiers", {})
+    sorted_cpu_keywords = sorted(cpu_tiers.keys(), key=len, reverse=True)
+
+    for keyword in sorted_cpu_keywords:
+        if keyword in cpu_lower:
+            score += cpu_tiers[keyword].get("score", 0)
+            break
+
+    gpu_lower = gpu.lower()
+    gpu_tiers = COMPONENTS_DATA.get("gpu_tiers", {})
+    sorted_gpu_keywords = sorted(gpu_tiers.keys(), key=len, reverse=True)
+
+    for keyword in sorted_gpu_keywords:
+        if keyword in gpu_lower:
+            score += gpu_tiers[keyword].get("score", 0)
+            break
+
+    if ram >= 16:
+        score += 3
+
+    return max(1, min(100, score))
+
+
+# ================= 3. DATABASE MANAGER =================
 class DatabaseManager:
     """Thin wrapper around SQLite for analysis cache read/write operations."""
 
@@ -83,7 +182,8 @@ class DatabaseManager:
             )
             conn.commit()
 
-# ================= 3. ANALYZER CORE =================
+
+# ================= 4. ANALYZER CORE =================
 class LaptopAnalyzer:
     """Main pipeline: parse ads → extract specs → benchmark lookup → score → report."""
 
@@ -94,55 +194,91 @@ class LaptopAnalyzer:
         self.ai = AIService()
         self.parser = LaptopParser()
 
-    def _get_external_data(self, top_laptops: list[dict]) -> tuple[dict, dict]:
-        if not ENABLE_EXTERNAL_LOOKUPS or not self.ai.client:
-            return {}, {}
+    def _get_external_data(self, processed_laptops: list[dict]) -> tuple[dict, dict]:
+        # Initialize prices and ratings with empty dicts
+        prices = {}
+        ratings = {}
 
-        price_cache = self._load_json_cache(WORLD_PRICE_CACHE)
-        nbc_cache = self._load_json_cache(NBC_CACHE_FILE)
+        # If external lookups are disabled or AI client is not available,
+        # we still want to apply fallback logic.
+        if ENABLE_EXTERNAL_LOOKUPS and self.ai.client:
+            price_cache = self._load_json_cache(WORLD_PRICE_CACHE)
+            nbc_cache = self._load_json_cache(NBC_CACHE_FILE)
 
-        prices, ratings, dirty = {}, {}, False
+            dirty = False
 
-        # Use ThreadPoolExecutor for parallel search
-        def process_laptop(lap: dict):
-            nonlocal dirty
-            # Improved cache key: CPU + GPU + RAM
-            key = f"{lap['cpu'][:25]}_{lap['gpu'][:15]}_{lap['ram']}"
+            # Use ThreadPoolExecutor for parallel search
+            def process_laptop_external(lap: dict):
+                nonlocal dirty
+                # Improved cache key: CPU + GPU + RAM
+                key = f"{lap['cpu'][:25]}_{lap['gpu'][:15]}_{lap['ram']}"
 
-            p_data = price_cache.get(key)
-            if not p_data:
-                log.info(f"Searching World Price: {lap['title'][:30]}")
-                p_prompt = f"Search launch price and current global price (USD) for laptop: {lap['title']} CPU: {lap['cpu']} GPU: {lap['gpu']}. Return JSON: {{\"launch_usd\": N, \"current_usd\": N}}"
-                p_data = self.ai.google_search_json(p_prompt)
-                if p_data:
-                    price_cache[key] = p_data
-                    dirty = True
-                time.sleep(GEMINI_SEARCH_DELAY_SEC) # Minimal delay between searches
+                p_data = price_cache.get(key)
+                if not p_data:
+                    log.info(f"Searching World Price: {lap['title'][:30]}")
+                    p_prompt = (
+                        f"Search launch price and current global price (USD) for laptop: "
+                        f"{lap['title']} CPU: {lap['cpu']} GPU: {lap['gpu']}. "
+                        f"Return JSON: {{\"launch_usd\": N, \"current_usd\": N}}"
+                    )
+                    p_data = self.ai.google_search_json(p_prompt)
+                    if p_data:
+                        price_cache[key] = p_data
+                        dirty = True
+                    time.sleep(GEMINI_SEARCH_DELAY_SEC)  # Minimal delay between searches
 
-            r_data = nbc_cache.get(key)
-            if not r_data:
-                log.info(f"Searching Review: {lap['title'][:30]}")
-                r_prompt = f"Find rating on Notebookcheck.net for: {lap['title']} CPU: {lap['cpu']} GPU: {lap['gpu']}. Return JSON: {{\"score\": int_percentage, \"url\": \"url\"}}"
-                r_data = self.ai.google_search_json(r_prompt)
-                if r_data:
-                    nbc_cache[key] = r_data
-                    dirty = True
-                time.sleep(GEMINI_SEARCH_DELAY_SEC)
+                r_data = nbc_cache.get(key)
+                if not r_data:
+                    log.info(f"Searching Review: {lap['title'][:30]}")
+                    r_prompt = (
+                        f"Find rating on Notebookcheck.net for: {lap['title']} "
+                        f"CPU: {lap['cpu']} GPU: {lap['gpu']}. "
+                        f"Return JSON: {{\"score\": int_percentage, \"url\": \"url\"}}"
+                    )
+                    r_data = self.ai.google_search_json(r_prompt)
+                    if r_data:
+                        nbc_cache[key] = r_data
+                        dirty = True
+                    time.sleep(GEMINI_SEARCH_DELAY_SEC)
 
-            return lap['id'], p_data, r_data
+                return lap['id'], p_data, r_data
 
-        with ThreadPoolExecutor(max_workers=min(3, GEMINI_MAX_WORKERS)) as executor:
-            futures = [executor.submit(process_laptop, lap) for lap in top_laptops[:WORLD_PRICE_TOP_N]]
-            for future in as_completed(futures):
-                l_id, p_val, r_val = future.result()
-                if p_val:
-                    prices[l_id] = p_val
-                if r_val:
-                    ratings[l_id] = r_val
+            with ThreadPoolExecutor(max_workers=min(3, GEMINI_MAX_WORKERS)) as executor:
+                futures = [executor.submit(process_laptop_external, lap) for lap in processed_laptops[:WORLD_PRICE_TOP_N]]
+                for future in as_completed(futures):
+                    l_id, p_val, r_val = future.result()
+                    if p_val:
+                        prices[l_id] = p_val
+                    if r_val:
+                        ratings[l_id] = r_val
 
-        if dirty:
-            self._save_json_cache(WORLD_PRICE_CACHE, price_cache)
-            self._save_json_cache(NBC_CACHE_FILE, nbc_cache)
+            if dirty:
+                self._save_json_cache(WORLD_PRICE_CACHE, price_cache)
+                self._save_json_cache(NBC_CACHE_FILE, nbc_cache)
+        
+        # Apply fallback logic for any missing external data
+        for lap in processed_laptops:
+            lap_id = lap['id']
+            
+            # Ensure cpu, gpu, ram, ssd are available for fallback functions
+            cpu_val = lap.get('cpu', '')
+            gpu_val = lap.get('gpu', '')
+            ram_val = lap.get('ram', 0)
+            ssd_val = lap.get('ssd', 0)
+
+            # Fallback for World Price
+            if lap_id not in prices or not prices[lap_id] or not prices[lap_id].get('current_usd'):
+                estimated_price_mdl = estimate_fallback_price(
+                    cpu_val, gpu_val, ram_val, ssd_val
+                )
+                prices[lap_id] = {"current_usd": estimated_price_mdl / MDL_USD_RATE, "fallback": True}
+            
+            # Fallback for NBC Score
+            if lap_id not in ratings or not ratings[lap_id] or not ratings[lap_id].get('score'):
+                estimated_score = estimate_fallback_score(
+                    cpu_val, gpu_val, ram_val
+                )
+                ratings[lap_id] = {"score": estimated_score, "fallback": True}
 
         return prices, ratings
 
@@ -163,7 +299,7 @@ class LaptopAnalyzer:
 
     def run(self):  # noqa: C901
         log.info("Starting analysis v3...")
-        init_time = datetime.datetime.now()
+        init_time = datetime.datetime.now().replace(microsecond=0) # Round to second for report name
 
         with sqlite3.connect(DB_NAME) as conn:
             ads = conn.execute(
@@ -284,7 +420,7 @@ class LaptopAnalyzer:
             s = sorted(prices)
             medians[cat] = s[len(s)//2]
 
-        # External Data
+        # External Data (now includes fallback logic)
         world_prices, nbc_ratings = self._get_external_data(processed)
 
         # Reporting
@@ -296,7 +432,10 @@ class LaptopAnalyzer:
             w(f"║  🏆  ТОП НОУТБУКОВ 999.MD — {init_time.strftime('%d.%m.%Y %H:%M'):<47}║")
             w("╚══════════════════════════════════════════════════════════════════════════════╝")
             w()
-            w(f"  Всего в рейтинге: {len(processed)} | Медианы: " + ", ".join([f"{k}: {int(v)}" for k,v in medians.items()]))
+            w(
+                f"  Всего в рейтинге: {len(processed)} | Медианы: "
+                + ", ".join([f"{k}: {int(v)}" for k, v in medians.items()])
+            )
             w()
 
             by_cat = defaultdict(list)
@@ -339,21 +478,33 @@ class LaptopAnalyzer:
                     c_usd = f"${wp.get('current_usd')}" if wp.get('current_usd') else "—"
 
                     vs_pct = "—"
+                    # Use the current_usd from wp, which now includes fallbacks
                     if wp.get('current_usd'):
-                        world_mdl = wp['current_usd'] * USD_TO_MDL
-                        diff = (r['price'] - world_mdl) / world_mdl * 100
-                        icon = "🟢" if diff < -10 else ("🟡" if diff < 10 else "🔴")
-                        vs_pct = f"{icon}{diff:+.0f}%"
+                        world_mdl = wp['current_usd'] * MDL_USD_RATE
+                        # Avoid division by zero if world_mdl is 0
+                        if world_mdl != 0:
+                            diff = (r['price'] - world_mdl) / world_mdl * 100
+                            icon = "🟢" if diff < -10 else ("🟡" if diff < 10 else "🔴")
+                            vs_pct = f"{icon}{diff:+.0f}%"
+                        else:
+                            vs_pct = "N/A" # Or some other indicator for invalid world_mdl
+                        if wp.get('fallback'): # Indicate if it's a fallback value
+                            vs_pct += "*"
 
                     score = f"{nbc.get('score')}%" if nbc.get('score') else "—"
                     if nbc.get('score') and nbc['score'] >= 85:
                         score = f"🔥{score}"
+                    if nbc.get('fallback'): # Indicate if it's a fallback value
+                        score += "*"
 
                     w(f"  │ {rank:<3} {r['price']:>7} MDL  {l_usd:>9}  {c_usd:>9}  {vs_pct:>9} │ {score:>6} │ {str(nbc.get('url'))[:35]:<35} │")
                 w(f"  └{'─'*W}┘")
+                w("\n* - Estimated value (fallback)")
 
         log.info(f"Report saved to {report_name}")
 
+
 if __name__ == "__main__":
+
     analyzer = LaptopAnalyzer()
     analyzer.run()

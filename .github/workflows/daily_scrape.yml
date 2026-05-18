@@ -1,0 +1,72 @@
+name: Daily Laptop Scraper
+
+on:
+  schedule:
+    # Запуск каждый день в 06:00 UTC (09:00 по времени Молдовы)
+    - cron: '0 6 * * *'
+  workflow_dispatch: # Позволяет запускать вручную из интерфейса GitHub
+
+jobs:
+  scrape-and-analyze:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt || pip install .
+
+      # Восстанавливаем БД и кэш-файлы из кэша GitHub Actions
+      - name: Restore Scraper Cache & DB
+        uses: actions/cache@v4
+        with:
+          path: |
+            laptops.db
+            pricehistory_cache.json
+            notebookcheck_cache.json
+          key: scraper-db-cache-${{ github.run_id }}
+          restore-keys: |
+            scraper-db-cache-
+
+      # Запуск сбора объявлений по всей Молдове
+      - name: Run Scraper (All Moldova)
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python lappars.py --once --region all
+
+      # Запуск анализатора и генерации отчетов
+      - name: Run Analyzer
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python laptop_analyzer_v3.py
+
+      # Сохраняем обновленную БД и кэш-файлы обратно в кэш
+      - name: Save Scraper Cache & DB
+        uses: actions/cache@v4
+        with:
+          path: |
+            laptops.db
+            pricehistory_cache.json
+            notebookcheck_cache.json
+          key: scraper-db-cache-${{ github.run_id }}
+
+      # Загружаем сгенерированные текстовые и CSV отчеты как артефакты сборки
+      - name: Upload Analysis Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: laptop-reports
+          path: |
+            top_laptops_*.txt
+            *.csv
+            *.json
+          retention-days: 7
