@@ -63,7 +63,7 @@ def estimate_year_from_cpu(cpu_name: str) -> int | None:
     # Intel Core i-series
     intel_gen_years = {
         1: 2009, 2: 2011, 3: 2012, 4: 2013, 5: 2015, 6: 2015, 7: 2016, 8: 2017,
-        9: 2018, 10: 2019, 11: 2020, 12: 2021, 13: 2022, 14: 2023
+        9: 2018, 10: 2019, 11: 2021, 12: 2022, 13: 2023, 14: 2024
     }
     intel_match = re.search(r"i[3579][-\s](\d{4,5})", cpu_name)
     if intel_match:
