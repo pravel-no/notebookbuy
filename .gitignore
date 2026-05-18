@@ -17,6 +17,7 @@ laptops_database.db
 
 # Cache files
 *.json
+!components_db.json
 pricehistory_cache.json
 notebookcheck_cache.json
 passmark_cpu.json
