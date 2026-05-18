@@ -45,6 +45,30 @@ fragment AdListFragment on Advert {
     ...FeatureValueFragment
     __typename
   }
+  hdd_type_feature: feature(id: 679) {
+    ...FeatureValueFragment
+    __typename
+  }
+  screen_size_feature: feature(id: 687) {
+    ...FeatureValueFragment
+    __typename
+  }
+  cpu_model_feature: feature(id: 2285) {
+    ...FeatureValueFragment
+    __typename
+  }
+  gpu_model_feature: feature(id: 2284) {
+    ...FeatureValueFragment
+    __typename
+  }
+  ram_size_feature: feature(id: 1244) {
+    ...FeatureValueFragment
+    __typename
+  }
+  gpu_type_feature: feature(id: 1988) {
+    ...FeatureValueFragment
+    __typename
+  }
   uploadedVideos: feature(id: 2562) {
     ...FeatureValueFragment
     __typename

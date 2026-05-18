@@ -254,12 +254,24 @@ def fetch_and_process(region: str = "balti"):  # noqa: C901
                 ad_url = f"https://999.md/ru/{ad_id}"
                 body_content = _description_from_ad(ad)
 
-                # Append SSD feature if present in GraphQL features
-                ssd_feature = ad.get("ssd_feature")
-                if isinstance(ssd_feature, dict) and ssd_feature.get("value"):
-                    val = ssd_feature["value"]
-                    if isinstance(val, dict) and val.get("translated"):
-                        body_content = f"{body_content} [SSD: {val['translated']}]"
+                # Append structured spec features if present in GraphQL features
+                spec_tags = []
+                for feat_name, label in [
+                    ("ssd_feature", "SSD"),
+                    ("hdd_type_feature", "HDD Type"),
+                    ("screen_size_feature", "Screen"),
+                    ("cpu_model_feature", "CPU Model"),
+                    ("gpu_model_feature", "GPU Model"),
+                    ("ram_size_feature", "RAM Volume"),
+                    ("gpu_type_feature", "GPU Type")
+                ]:
+                    feat = ad.get(feat_name)
+                    if isinstance(feat, dict) and feat.get("value"):
+                        val = feat["value"]
+                        if isinstance(val, dict) and val.get("translated"):
+                            spec_tags.append(f"[{label}: {val['translated']}]")
+                if spec_tags:
+                    body_content = f"{body_content} {' '.join(spec_tags)}"
 
                 # Convert price to MDL
                 price = 0.0
@@ -324,16 +336,25 @@ def fetch_and_process(region: str = "balti"):  # noqa: C901
                                         # If no specific main content, get text from body after cleaning
                                         body_content = soup.body.get_text(" ", strip=True) if soup.body else ""
 
-                            # Extract SSD from structured HTML features if present
-                            ssd_html = ""
-                            for li in soup.find_all("li"):
-                                if "Объем жесткого диска" in li.get_text():
-                                    link = li.find("a")
-                                    if link:
-                                        ssd_html = link.get_text(strip=True)
-                                        break
-                            if ssd_html:
-                                body_content = f"{body_content} [SSD: {ssd_html}]"
+                            # Extract structured HTML features if present
+                            spec_tags = []
+                            for key, label in [
+                                ("Объем жесткого диска", "SSD"),
+                                ("Тип жесткого диска", "HDD Type"),
+                                ("Диагональ дисплея", "Screen"),
+                                ("Модель процессора", "CPU Model"),
+                                ("Модель видеокарты", "GPU Model"),
+                                ("Объем RAM", "RAM Volume"),
+                                ("Тип видеокарты", "GPU Type")
+                            ]:
+                                for li in soup.find_all("li"):
+                                    if key in li.get_text():
+                                        link = li.find("a")
+                                        if link:
+                                            spec_tags.append(f"[{label}: {link.get_text(strip=True)}]")
+                                            break
+                            if spec_tags:
+                                body_content = f"{body_content} {' '.join(spec_tags)}"
 
                         except Exception as e:
                             log.warning(f"Error parsing HTML for {ad_url}: {e}")
