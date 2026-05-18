@@ -60,50 +60,53 @@ class LaptopParser:
     def _extract_ssd(full_text: str, ram_match: Any) -> int:
         ssd_match = None
 
+        # 1. Standard pattern with explicit SSD/NVMe/HDD label
         pattern_labeled = re.compile(
             r'\b(128|256|500|512|1000|1024|2000|2048|1|2|4)\s*(?:tb|тб|gb|гб|t|g)?\s*(?:ssd|nvme|hdd|ссд|m\.2|pcie)\b',
             re.IGNORECASE
         )
         ssd_match = pattern_labeled.search(full_text)
 
-        if not ssd_match:
-            pattern_tb = re.compile(r'\b(1|2|4)\s*(?:tb|тб|t)\b', re.IGNORECASE)
-            ssd_match = pattern_tb.search(full_text)
+        if ssd_match:
+            # We found an explicit label. Let's parse it using the robust logic we had.
+            try:
+                matched_str = ssd_match.group(0)
+                num_str = re.search(r'\d+', matched_str).group(0)
+                num = int(num_str)
+                unit_match = re.search(r'(tb|тб|gb|гб|t|g)', matched_str, re.IGNORECASE)
+                unit = unit_match.group(1).lower() if unit_match else None
 
-        if not ssd_match:
-            pattern_large_gb = re.compile(r'\b(256|500|512|1000|1024|2000|2048)\s*(?:gb|гб|g)\b', re.IGNORECASE)
-            ssd_match = pattern_large_gb.search(full_text)
+                if unit in ('tb', 'тб', 't') or (num in (1, 2, 4) and not unit):
+                    return num * 1024
+                elif unit in ('gb', 'гб', 'g'):
+                    return num
+                elif num in (1, 2, 4):
+                    return num * 1024
+                elif 10 < num < 4000:
+                    return num
+                elif num <= 4:
+                    return num * 1024
+            except Exception:
+                pass
 
-        if not ssd_match:
-            pattern_128gb = re.compile(r'\b128\s*(?:gb|гб|g)\b', re.IGNORECASE)
-            m_128 = pattern_128gb.search(full_text)
-            if m_128:
-                ram_val = int(ram_match.group(1)) if ram_match else 0
-                if ram_val != 128:
-                    ssd_match = m_128
+        # 2. Standalone TB pattern: 1 or 2 followed by tb/тб
+        pattern_tb = re.compile(r'\b(1|2)\s*(?:tb|тб)\b', re.IGNORECASE)
+        tb_match = pattern_tb.search(full_text)
+        if tb_match:
+            num = int(tb_match.group(1))
+            return num * 1024
 
-        if not ssd_match:
-            return 0
+        # 3. Standalone GB pattern (with optional gb/гб suffix): 128, 256, 512, 1000, 1024, 2000, 2048
+        # Since RAM is rarely these exact large numbers (except maybe 128, but we'll check it)
+        pattern_gb = re.compile(r'\b(128|256|512|1000|1024|2000|2048)(?:\s*(?:gb|гб))?\b', re.IGNORECASE)
 
-        try:
-            matched_str = ssd_match.group(0)
-            num_str = re.search(r'\d+', matched_str).group(0)
-            num = int(num_str)
-            unit_match = re.search(r'(tb|тб|gb|гб|t|g)', matched_str)
-            unit = unit_match.group(1) if unit_match else None
-
-            if unit in ('tb', 'тб', 't') or (num in (1, 2, 4) and not unit):
-                return num * 1024
-            elif unit in ('gb', 'гб', 'g'):
+        # We need to find all matches and pick the first one that is NOT the RAM amount
+        ram_val = int(ram_match.group(1)) if ram_match else 0
+        for match in pattern_gb.finditer(full_text):
+            num = int(match.group(1))
+            if num != ram_val:
                 return num
-            elif num in (1, 2, 4):
-                return num * 1024
-            elif 10 < num < 4000:
-                return num
-            elif num <= 4:
-                return num * 1024
-        except Exception:
-            return 0
+
         return 0
 
     @staticmethod
