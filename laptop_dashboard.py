@@ -242,9 +242,14 @@ if df_raw.empty:
 # Data Transformations & Filter Extras
 # Clean up unwanted ads (scam / buying / broken)
 unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
+shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
 def is_clean(title):
     title_lower = str(title).lower()
-    return not any(kw in title_lower for kw in unwanted_keywords)
+    if any(kw in title_lower for kw in unwanted_keywords):
+        return False
+    if any(kw in title_lower for kw in shop_spam_keywords):
+        return False
+    return True
 
 df_raw = df_raw[df_raw['title'].apply(is_clean)]
 
@@ -561,6 +566,12 @@ def estimate_fallback_price(cpu, gpu, ram, ssd, brand=""):
     return int(total_usd * MDL_USD_RATE)
 
 def estimate_fallback_score(cpu, gpu, ram):
+    cpu_str = str(cpu).lower()
+    if any(m in cpu_str for m in ('m1', 'm2', 'm3', 'm4')):
+        if any(p in cpu_str for p in ('pro', 'max', 'ultra')):
+            return 90
+        return 80
+
     cpu_data = get_cpu_tier(cpu)
     gpu_data = get_gpu_tier(gpu)
     ram_gb = safe_to_float(ram)

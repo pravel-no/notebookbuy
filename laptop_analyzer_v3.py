@@ -121,6 +121,12 @@ def estimate_fallback_score(cpu: str, gpu: str, ram: int) -> int:
     Estimates a synthetic performance score (1-100) based on extracted components
     using data from COMPONENTS_DATA.
     """
+    cpu_str = str(cpu).lower()
+    if any(m in cpu_str for m in ('m1', 'm2', 'm3', 'm4')):
+        if any(p in cpu_str for p in ('pro', 'max', 'ultra')):
+            return 90
+        return 80
+
     if not COMPONENTS_DATA:
         return 0 # Cannot estimate without data
 
@@ -313,6 +319,13 @@ class LaptopAnalyzer:
             for row in ads:
                 ad_id, title, price, desc, url = str(row[0]), row[1], row[2], row[3], row[4]
                 if not (MIN_PRICE_MDL <= price <= MAX_PRICE_MDL):
+                    continue
+
+                # Filter shop spam (both title and description)
+                title_lower = title.lower()
+                desc_lower = (desc or "").lower()
+                shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
+                if any(kw in title_lower or kw in desc_lower for kw in shop_spam_keywords):
                     continue
 
                 # desc might contain body text from GraphQL

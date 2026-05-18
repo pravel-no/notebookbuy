@@ -119,3 +119,17 @@ def test_apple_m3_max():
     assert "m3 max" in res["cpu"]
     assert res["ram"] == 48
     assert res["ssd"] == 1024
+
+
+def test_slitted_and_standalone_ssd():
+    # 256gb slitted
+    res1 = LaptopParser.regex_parse("8gb ram 256gb ssd", "Lenovo")
+    assert res1["ssd"] == 256
+
+    # 1tb standalone
+    res2 = LaptopParser.regex_parse("16GB / 1TB", "Asus Vivobook")
+    assert res2["ssd"] == 1024
+
+    # 256gb standalone
+    res3 = LaptopParser.regex_parse("8gb ram 256gb", "Dell Inspiron")
+    assert res3["ssd"] == 256

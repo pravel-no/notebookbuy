@@ -74,25 +74,59 @@ class LaptopParser:
             if not re.search(r'(?:apple|macbook)', full_text):
                 cpu = "" # Discard the M-series CPU match if not an Apple product
 
+        # Robust SSD Size Extraction
+        ssd_match = None
+
+        # 1. Standard pattern with SSD/NVMe label:
+        # e.g., "256gb ssd", "256 ssd", "1tb nvme", "1 tb ssd"
+        pattern_labeled = re.compile(
+            r'\b(128|256|500|512|1000|1024|2000|2048|1|2|4)\s*(?:tb|тб|gb|гб|t|g)?\s*(?:ssd|nvme|hdd|ссд|m\.2|pcie)\b',
+            re.IGNORECASE
+        )
+        ssd_match = pattern_labeled.search(full_text)
+
+        # 2. Standalone TB pattern (since RAM is never in TB):
+        # e.g., "1tb", "2 tb", "1t"
+        if not ssd_match:
+            pattern_tb = re.compile(r'\b(1|2|4)\s*(?:tb|тб|t)\b', re.IGNORECASE)
+            ssd_match = pattern_tb.search(full_text)
+
+        # 3. Standalone large GB pattern (256GB and above are always SSD, not RAM):
+        # e.g., "256gb", "512 gb", "256g"
+        if not ssd_match:
+            pattern_large_gb = re.compile(r'\b(256|500|512|1000|1024|2000|2048)\s*(?:gb|гб|g)\b', re.IGNORECASE)
+            ssd_match = pattern_large_gb.search(full_text)
+
+        # 4. If we still don't have a match, let's search for "128gb" if it's not already matched by RAM_REGEX
+        # e.g. "8gb 128gb" where 8gb is RAM, so 128gb is SSD
+        if not ssd_match:
+            pattern_128gb = re.compile(r'\b128\s*(?:gb|гб|g)\b', re.IGNORECASE)
+            m_128 = pattern_128gb.search(full_text)
+            if m_128:
+                ram_val = int(ram_match.group(1)) if ram_match else 0
+                if ram_val != 128:
+                    ssd_match = m_128
+
         # Format/Clean SSD size
         ssd_val = 0
         if ssd_match:
             try:
-                num_str = re.search(r'\d+', ssd_match.group(0)).group(0)
+                matched_str = ssd_match.group(0)
+                num_str = re.search(r'\d+', matched_str).group(0)
                 num = int(num_str)
-                unit_match = re.search(r'(tb|тб|gb|гб|t|g)', ssd_match.group(0))
+                unit_match = re.search(r'(tb|тб|gb|гб|t|g)', matched_str)
                 unit = unit_match.group(1) if unit_match else None
 
-                if unit in ('tb', 'тб', 't'):
+                if unit in ('tb', 'тб', 't') or (num in (1, 2, 4) and not unit):
                     ssd_val = num * 1024
                 elif unit in ('gb', 'гб', 'g'):
                     ssd_val = num
-                elif num in (1, 2, 4) and any(x in ssd_match.group(0) for x in ['ssd', 'nvme', 'm.2']): # "1 ssd" without unit -> assume TB
+                elif num in (1, 2, 4): # fallback assume TB if number is very small
                     ssd_val = num * 1024
                 else: # Fallback for numbers without clear units, assume GB if reasonable
-                    if num > 10 and num < 4000: # e.g. "512 ssd"
+                    if num > 10 and num < 4000:
                         ssd_val = num
-                    elif num <= 4: # e.g. "4tb ssd" but unit not caught
+                    elif num <= 4:
                         ssd_val = num * 1024
             except Exception:
                 ssd_val = 0

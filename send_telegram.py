@@ -89,6 +89,12 @@ def estimate_fallback_price(cpu, gpu, ram, ssd, brand, components_data):
     return int(total_usd * MDL_USD_RATE)
 
 def estimate_fallback_score(cpu, gpu, ram, components_data):
+    cpu_str = str(cpu).lower()
+    if any(m in cpu_str for m in ('m1', 'm2', 'm3', 'm4')):
+        if any(p in cpu_str for p in ('pro', 'max', 'ultra')):
+            return 90
+        return 80
+
     cpu_data = get_cpu_tier(cpu, components_data)
     gpu_data = get_gpu_tier(gpu, components_data)
     ram_gb = safe_to_float(ram)
@@ -100,12 +106,17 @@ def estimate_fallback_score(cpu, gpu, ram, components_data):
 
 def process_deals(rows, price_cache, nbc_cache, components_data):
     unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
+    shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
     deals = []
 
     for r in rows:
         title = r['title']
         title_lower = title.lower()
         if any(kw in title_lower for kw in unwanted_keywords):
+            continue
+
+        # Filter out shop spam from title
+        if any(kw in title_lower for kw in shop_spam_keywords):
             continue
 
         brand = extract_brand(title)
@@ -161,8 +172,8 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
         elif r['price'] < 2000 and r['year_est'] > 2019:
             risk = "⚠️ На запчасти?"
 
-        # We want to filter for good value_score and NO risk
-        if value_score >= 100 and risk == "":
+        # We want to filter for good value_score
+        if value_score >= 100:
             deals.append({
                 'title': title,
                 'price': int(r['price']),
@@ -173,7 +184,8 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
                 'cpu': r['cpu'],
                 'ram': r['ram'],
                 'ssd': r['ssd'],
-                'brand': brand
+                'brand': brand,
+                'risk': risk
             })
     return deals
 
@@ -228,6 +240,8 @@ def main():
         message += f" 📈 *Выгода:* `{d['vs_str']} vs World`\n"
         message += f" 🎯 *NBC Score:* `{d['nbc_score']}%` | *Value Score:* `{d['value_score']}`\n"
         message += f" 🛠 *Характеристики:* `{d['cpu']} | {d['ram']}GB RAM | {d['ssd']}GB SSD`\n"
+        if d.get('risk'):
+            message += f" 🚨 *РИСК:* `{d['risk']}`\n"
         message += f" 🔗 [Открыть объявление]({d['url']})\n\n"
         message += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
 
