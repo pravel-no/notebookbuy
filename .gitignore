@@ -18,10 +18,10 @@ laptops_database.db
 # Cache files
 *.json
 !components_db.json
+!passmark_cpu.json
+!passmark_gpu.json
 pricehistory_cache.json
 notebookcheck_cache.json
-passmark_cpu.json
-passmark_gpu.json
 
 # Reports
 *.txt
