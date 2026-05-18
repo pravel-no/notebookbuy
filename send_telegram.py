@@ -200,7 +200,9 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
 
         # Risk assessment
         risk = ""
-        if brand == 'Apple' and vs_pct < -55:
+        if brand == 'Apple' and r['price'] < 12000 and any(chip in title_lower or chip in str(r['cpu']).lower() for chip in ['m2', 'm3', 'm4']):
+            risk = "⚠️ Слишком низкая цена! Проверяйте на MDM профиль и iCloud!"
+        elif brand == 'Apple' and vs_pct < -55:
             risk = "⚠️ Высокий (Скам/Блок)"
         elif brand != 'Apple' and vs_pct < -65:
             risk = "⚠️ Подозрительно дешево"
