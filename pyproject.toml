@@ -64,3 +64,20 @@ lines-after-imports = 2
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.setuptools]
+py-modules = [
+    "ai_service",
+    "app_config",
+    "benchmarks",
+    "currency",
+    "db",
+    "lappars",
+    "laptop_analyzer_v3",
+    "laptop_dashboard",
+    "launcher",
+    "parser",
+    "retry_utils",
+    "scoring",
+]
+
