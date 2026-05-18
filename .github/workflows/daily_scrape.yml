@@ -60,6 +60,14 @@ jobs:
             notebookcheck_cache.json
           key: scraper-db-cache-${{ github.run_id }}
 
+      # Отправляем сводку лучших сделок в Telegram
+      - name: Send Telegram Notification
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python send_telegram.py
+
       # Загружаем сгенерированные текстовые и CSV отчеты как артефакты сборки
       - name: Upload Analysis Reports
         uses: actions/upload-artifact@v4
