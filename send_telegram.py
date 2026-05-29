@@ -254,6 +254,7 @@ def main():
         SELECT a.id, a.title, a.price, a.url, a.description, c.cpu, c.gpu, c.ram, c.ssd, c.is_broken, c.year_est, c.cpu_score, c.gpu_score
         FROM ads a
         JOIN analysis_cache c ON a.id = c.id
+        WHERE a.parsed_at >= datetime(substr((SELECT MAX(parsed_at) FROM ads), 1, 19), '-2 hours')
     """
     rows = cursor.execute(query).fetchall()
     conn.close()
