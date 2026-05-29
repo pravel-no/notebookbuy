@@ -33,6 +33,7 @@ from scoring import (
     MDL_USD_RATE,  # Import MDL_USD_RATE
     MIN_PRICE_MDL,
     MIN_YEAR,
+    is_unwanted_ad,
     score_laptop,
 )
 
@@ -321,11 +322,8 @@ class LaptopAnalyzer:
                 if not (MIN_PRICE_MDL <= price <= MAX_PRICE_MDL):
                     continue
 
-                # Filter shop spam (both title and description)
-                title_lower = title.lower()
-                desc_lower = (desc or "").lower()
-                shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
-                if any(kw in title_lower or kw in desc_lower for kw in shop_spam_keywords):
+                # Skip buying requests ("куплю/cumpăr") and shop spam
+                if is_unwanted_ad(title, desc):
                     continue
 
                 # desc might contain body text from GraphQL

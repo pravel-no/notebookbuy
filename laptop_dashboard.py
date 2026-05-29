@@ -17,6 +17,7 @@ from scoring import (
     MDL_USD_RATE,  # Import MDL_USD_RATE from scoring
     MIN_PRICE_MDL,
     classify_laptop,
+    is_unwanted_ad,
     score_laptop,
 )
 
@@ -118,6 +119,7 @@ def load_data() -> pd.DataFrame:
             a.price,
             a.url,
             a.image_url,
+            a.description,
             c.cpu,
             c.gpu,
             c.ram,
@@ -241,17 +243,13 @@ if df_raw.empty:
 
 # Data Transformations & Filter Extras
 # Clean up unwanted ads (scam / buying / broken)
-unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
-shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
-def is_clean(title):
-    title_lower = str(title).lower()
-    if any(kw in title_lower for kw in unwanted_keywords):
+parts_keywords = ["defect", "piese", "запчасти"]
+def is_clean(row):
+    if any(kw in str(row["title"]).lower() for kw in parts_keywords):
         return False
-    if any(kw in title_lower for kw in shop_spam_keywords):
-        return False
-    return True
+    return not is_unwanted_ad(row["title"], row.get("description", ""))
 
-df_raw = df_raw[df_raw['title'].apply(is_clean)]
+df_raw = df_raw[df_raw.apply(is_clean, axis=1)]
 
 df = apply_scoring(df_raw)
 df = df.drop_duplicates(subset=['url'], keep='last')

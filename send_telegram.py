@@ -8,7 +8,7 @@ import requests
 
 # Import shared configurations and scoring
 from app_config import DB_NAME
-from scoring import MDL_USD_RATE, score_laptop
+from scoring import MDL_USD_RATE, is_unwanted_ad, score_laptop
 
 
 # Retrieve tokens from environment variables
@@ -140,18 +140,18 @@ def _get_runtime_ssd(r, brand, title_lower):
 
 
 def process_deals(rows, price_cache, nbc_cache, components_data):
-    unwanted_keywords = ["cumpar", "cumpăr", "куплю", "defect", "piese", "запчасти"]
-    shop_spam_keywords = ["cele mai bune preturi", "cele mai bune prețuri", "pentru toate laptopurile", "asortiment"]
+    parts_keywords = ["defect", "piese", "запчасти"]
     deals = []
 
     for r in rows:
         title = r['title']
         title_lower = title.lower()
-        if any(kw in title_lower for kw in unwanted_keywords):
+        description = r['description'] if 'description' in r.keys() else ''
+        if any(kw in title_lower for kw in parts_keywords):
             continue
 
-        # Filter out shop spam from title
-        if any(kw in title_lower for kw in shop_spam_keywords):
+        # Skip buying requests ("куплю/cumpăr") and shop spam
+        if is_unwanted_ad(title, description):
             continue
 
         brand = extract_brand(title)

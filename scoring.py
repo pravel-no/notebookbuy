@@ -43,6 +43,27 @@ CATEGORY_LABEL = {
     "Office": "OFFICE",
 }
 
+_BUYING_AD_RE = re.compile(
+    r"\b(?:куплю|скуплю|скупка|выкуп|cumpăr|cumpar|cumpărăm|cumparam)\b",
+    re.IGNORECASE,
+)
+
+SHOP_SPAM_KEYWORDS = (
+    "cele mai bune preturi",
+    "cele mai bune prețuri",
+    "pentru toate laptopurile",
+    "asortiment",
+)
+
+
+def is_unwanted_ad(title: str, description: str = "") -> bool:
+    """True for buying requests ('куплю/cumpăr') and shop spam, not real sales."""
+    blob = f"{str(title or '').lower()} {str(description or '').lower()}"
+    if _BUYING_AD_RE.search(blob):
+        return True
+    return any(kw in blob for kw in SHOP_SPAM_KEYWORDS)
+
+
 # --- Fallback Tiers and Estimation Logic ---
 MDL_USD_RATE = 18.0
 
