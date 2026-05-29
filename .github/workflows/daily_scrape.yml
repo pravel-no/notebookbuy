@@ -24,7 +24,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt || pip install .
+          pip install .
 
       # Восстанавливаем БД и кэш-файлы из кэша GitHub Actions
       - name: Restore Scraper Cache & DB
@@ -77,6 +77,6 @@ jobs:
           name: laptop-reports
           path: |
             top_laptops_*.txt
-            *.csv
-            *.json
+            pricehistory_cache.json
+            notebookcheck_cache.json
           retention-days: 7

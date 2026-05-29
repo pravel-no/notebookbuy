@@ -5,9 +5,24 @@ from scoring import (
     ANALYSIS_VERSION,
     classify_laptop,
     estimate_year_from_cpu,
+    infer_ssd_gb,
     normalize_cpu_name,
     score_laptop,
 )
+
+
+@pytest.mark.parametrize(
+    "ssd,year,is_apple,expected",
+    [
+        (256, 2022, False, 256),   # explicit value is kept
+        (0, 2022, False, 512),     # modern non-Apple default
+        (0, 2022, True, 256),      # modern Apple default
+        (0, 2018, False, 0),       # old device stays unknown
+        (0, None, False, 0),       # unknown year stays unknown
+    ],
+)
+def test_infer_ssd_gb(ssd, year, is_apple, expected):
+    assert infer_ssd_gb(ssd, year, is_apple) == expected
 
 
 @pytest.mark.parametrize(

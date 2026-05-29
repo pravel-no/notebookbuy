@@ -114,6 +114,20 @@ def test_is_broken_true_for_spare_parts():
     assert res["is_broken"] is True
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "Продам срочно, отличное состояние",
+        "Urgent sale, like new",
+        "Цена без торга, всё работает идеально",
+    ],
+)
+def test_urgency_is_not_broken(text: str):
+    """Urgency wording must not trigger the broken-device penalty."""
+    res = LaptopParser.regex_parse(text, "Lenovo ThinkPad i7-1165G7 16gb 512gb")
+    assert res["is_broken"] is False
+
+
 def test_apple_m3_max():
     res = LaptopParser.regex_parse("Apple M3 Max 48gb ram 1tb ssd", "MacBook Pro 16")
     assert "m3 max" in res["cpu"]
