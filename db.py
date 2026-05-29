@@ -2,9 +2,18 @@
 Unified SQLite schema for ads, price history, and analysis cache.
 All entry points should call init_database() before using the DB.
 """
+import datetime
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+
+
+# Python 3.12 deprecated the implicit datetime->str adapter. Register an
+# explicit one that reproduces the previous output ("YYYY-MM-DD HH:MM:SS.ffffff")
+# so stored timestamps — and price-history ordering — stay byte-for-byte stable.
+sqlite3.register_adapter(
+    datetime.datetime, lambda dt: dt.isoformat(sep=" ", timespec="microseconds")
+)
 
 
 DEFAULT_DB_NAME = "laptops_database.db"
