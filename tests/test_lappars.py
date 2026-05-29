@@ -54,6 +54,40 @@ def test_sub_one_percent_change_is_unchanged(db):
         conn.commit()
 
 
+def test_parse_graphql_ad_basic():
+    ad = {
+        "id": "42",
+        "title": "  Lenovo Legion  ",
+        "description": {"value": "Gaming laptop"},
+        "ssd_feature": {"value": {"translated": "512 GB"}},
+        "price": {"value": "1500 €"},
+        "images": {"value": '["abc/def"]'},
+    }
+    parsed = lappars.parse_graphql_ad(ad)
+    assert parsed["id"] == 42
+    assert parsed["title"] == "Lenovo Legion"
+    assert parsed["url"] == "https://999.md/ru/42"
+    assert "[SSD: 512 GB]" in parsed["body"]
+    assert parsed["body"].startswith("Gaming laptop")
+    assert parsed["image_url"] == "https://i.999.md/m/abc/def.jpg"
+    # 1500 EUR converted to MDL must exceed the raw amount.
+    assert parsed["price"] > 1500
+
+
+def test_parse_graphql_ad_usd_and_plain():
+    usd = lappars.parse_graphql_ad({"id": "1", "price": {"value": "$1000"}})
+    plain = lappars.parse_graphql_ad({"id": "2", "price": {"value": "9999 lei"}})
+    assert usd["price"] > 1000          # USD -> MDL
+    assert plain["price"] == 9999.0     # already MDL, no conversion
+
+
+def test_parse_graphql_ad_missing_fields():
+    parsed = lappars.parse_graphql_ad({"id": "7"})
+    assert parsed["price"] == 0.0
+    assert parsed["body"] == ""
+    assert parsed["image_url"] == ""
+
+
 def test_get_price_drops_reports_drop(db):
     with sqlite3.connect(db) as conn:
         cur = conn.cursor()
