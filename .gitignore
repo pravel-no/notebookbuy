@@ -27,6 +27,10 @@ notebookcheck_cache.json
 *.txt
 *.log
 
+# Patch / diff artifacts
+*.diff
+*.patch
+
 # PyInstaller
 build/
 dist/

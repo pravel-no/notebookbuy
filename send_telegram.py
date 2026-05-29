@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -8,8 +9,19 @@ import requests
 
 # Import shared configurations and scoring
 from app_config import DB_NAME
-from scoring import MDL_USD_RATE, is_unwanted_ad, score_laptop
+from estimation import estimate_fallback_price, estimate_fallback_score
+from scoring import MDL_USD_RATE, infer_ssd_gb, is_unwanted_ad, score_laptop
 
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+log = logging.getLogger(__name__)
+
+# Minimum value_score for a laptop to be included in the Telegram digest.
+MIN_VALUE_SCORE = 100
 
 # Retrieve tokens from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -19,14 +31,6 @@ WORLD_PRICE_CACHE = "pricehistory_cache.json"
 NBC_CACHE_FILE = "notebookcheck_cache.json"
 COMPONENTS_DB_FILE = "components_db.json"
 
-def safe_to_float(val, default=0.0):
-    try:
-        if val is None or val == '' or val == '—':
-            return default
-        val_str = str(val).replace('%', '').replace('+', '').strip()
-        return float(val_str)
-    except (ValueError, TypeError):
-        return default
 
 def load_json_cache(filename):
     if os.path.exists(filename):
@@ -44,66 +48,6 @@ def extract_brand(title):
         if b in title_lower:
             return "Apple" if b in ("apple", "macbook") else b.upper()
     return "OTHER"
-
-def get_cpu_tier(cpu_name, components_data):
-    if not components_data:
-        return {'price': 0, 'score': 0}
-    cpu_str = str(cpu_name).lower()
-    cpu_tiers = components_data.get("cpu_tiers", {})
-    sorted_keywords = sorted(cpu_tiers.keys(), key=len, reverse=True)
-    for kw in sorted_keywords:
-        if kw in cpu_str:
-            return cpu_tiers[kw]
-    return {'price': 100, 'score': 2}
-
-def get_gpu_tier(gpu_name, components_data):
-    if not components_data:
-        return {'price': 0, 'score': 0}
-    gpu_str = str(gpu_name).lower()
-    gpu_tiers = components_data.get("gpu_tiers", {})
-    sorted_keywords = sorted(gpu_tiers.keys(), key=len, reverse=True)
-    for kw in sorted_keywords:
-        if kw in gpu_str:
-            return gpu_tiers[kw]
-    return {'price': 0, 'score': 0}
-
-def estimate_fallback_price(cpu, gpu, ram, ssd, brand, components_data):
-    base_chassis_price = components_data.get("base_laptop_price", 200)
-    if str(brand).lower() == 'apple':
-        base_chassis_price += 300
-
-    cpu_data = get_cpu_tier(cpu, components_data)
-    gpu_data = get_gpu_tier(gpu, components_data)
-
-    ram_gb = safe_to_float(ram)
-    ram_gb = min(ram_gb, 16.0)
-
-    ssd_gb = safe_to_float(ssd)
-    if ssd_gb <= 0:
-        ssd_gb = 512.0
-    ssd_gb = min(ssd_gb, 512.0)
-
-    ram_price = ram_gb * 4
-    ssd_price = (ssd_gb / 128) * 10
-
-    total_usd = base_chassis_price + cpu_data.get('price', 0) + gpu_data.get('price', 0) + ram_price + ssd_price
-    return int(total_usd * MDL_USD_RATE)
-
-def estimate_fallback_score(cpu, gpu, ram, components_data):
-    cpu_str = str(cpu).lower()
-    if any(m in cpu_str for m in ('m1', 'm2', 'm3', 'm4')):
-        if any(p in cpu_str for p in ('pro', 'max', 'ultra')):
-            return 90
-        return 80
-
-    cpu_data = get_cpu_tier(cpu, components_data)
-    gpu_data = get_gpu_tier(gpu, components_data)
-    ram_gb = safe_to_float(ram)
-    score = cpu_data.get('score', 2) + gpu_data.get('score', 0)
-    if ram_gb >= 16:
-        score += 3
-    return int(min(100, max(1, score)))
-
 
 def extract_region(description):
     if not description:
@@ -128,15 +72,9 @@ def extract_region(description):
 
 
 def _get_runtime_ssd(r, brand, title_lower):
-    ssd_val = r['ssd']
-    if ssd_val == 0:
-        year_est = r['year_est'] or (datetime.now().year - 7)
-        if year_est >= 2021:
-            if brand == 'Apple' or any(w in title_lower for w in ['apple', 'macbook']):
-                return 256
-            else:
-                return 512
-    return ssd_val
+    is_apple = brand == 'Apple' or any(w in title_lower for w in ['apple', 'macbook'])
+    year_est = r['year_est'] or (datetime.now().year - 7)
+    return infer_ssd_gb(r['ssd'], year_est, is_apple)
 
 
 def process_deals(rows, price_cache, nbc_cache, components_data):
@@ -213,7 +151,7 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
         ssd_val = _get_runtime_ssd(r, brand, title_lower)
 
         # We want to filter for good value_score
-        if value_score >= 100:
+        if value_score >= MIN_VALUE_SCORE:
             deals.append({
                 'title': title,
                 'price': int(r['price']),
@@ -233,12 +171,12 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
 
 def main():
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        print("Telegram configuration missing. Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
+        log.error("Telegram configuration missing. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
         return
 
-    print("Connecting to database and calculating the best deals...")
+    log.info("Connecting to database and calculating the best deals...")
     if not os.path.exists(DB_NAME):
-        print(f"Database {DB_NAME} not found. Cannot send notifications.")
+        log.error("Database %s not found. Cannot send notifications.", DB_NAME)
         return
 
     # Load caches
@@ -261,7 +199,7 @@ def main():
     deals = process_deals(rows, price_cache, nbc_cache, components_data)
 
     if not deals:
-        print("No high-value laptop deals found today.")
+        log.info("No high-value laptop deals found today.")
         return
 
     # 1. Moldova deals (all regions) - Top 5
@@ -307,7 +245,7 @@ def main():
     else:
         message += "   _Выгодных предложений в Бельцах пока не найдено._\n\n"
 
-    print("Sending message to Telegram...")
+    log.info("Sending message to Telegram...")
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
@@ -319,11 +257,11 @@ def main():
     try:
         response = requests.post(url, json=payload, timeout=10)
         if response.status_code == 200:
-            print("Telegram notification sent successfully!")
+            log.info("Telegram notification sent successfully!")
         else:
-            print(f"Failed to send message: {response.text}")
+            log.error("Failed to send message: %s", response.text)
     except Exception as e:
-        print(f"Error sending Telegram message: {e}")
+        log.error("Error sending Telegram message: %s", e)
 
 
 if __name__ == "__main__":

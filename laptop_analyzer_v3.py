@@ -24,6 +24,7 @@ from app_config import (
 )
 from benchmarks import HardwareBenchmarker
 from db import init_database
+from estimation import estimate_fallback_price, estimate_fallback_score
 from parser import LaptopParser
 from scoring import (
     ANALYSIS_VERSION,
@@ -41,7 +42,6 @@ from scoring import (
 # ================= 1. CONFIGURATION =================
 WORLD_PRICE_CACHE = "pricehistory_cache.json"
 NBC_CACHE_FILE = "notebookcheck_cache.json"
-COMPONENTS_DB_FILE = "components_db.json" # New: Define components DB file
 
 if not GEMINI_API_KEY:
     logging.warning("GEMINI_API_KEY is not set — AI extraction and external lookups will be skipped")
@@ -53,108 +53,8 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# Global variable to store loaded components data
-COMPONENTS_DATA = {}
 
-def load_components_db():
-    """Loads component pricing and scoring data from components_db.json."""
-    global COMPONENTS_DATA
-    if not COMPONENTS_DATA: # Load only once
-        try:
-            with open(COMPONENTS_DB_FILE, encoding='utf-8') as f:
-                COMPONENTS_DATA = json.load(f)
-            log.info(f"Loaded component data from {COMPONENTS_DB_FILE}")
-        except FileNotFoundError:
-            log.error(f"Error: {COMPONENTS_DB_FILE} not found. Fallback estimation will not work correctly.")
-            COMPONENTS_DATA = {}
-        except json.JSONDecodeError as e:
-            log.error(f"Error decoding JSON from {COMPONENTS_DB_FILE}: {e}. Fallback estimation will not work correctly.")
-            COMPONENTS_DATA = {}
-
-# Call this once at startup
-load_components_db()
-
-
-# ================= 2. FALLBACK ESTIMATION FUNCTIONS =================
-
-def estimate_fallback_price(cpu: str, gpu: str, ram: int, ssd: int) -> int:
-    """
-    Estimates a synthetic world price in MDL based on extracted components
-    using data from COMPONENTS_DATA.
-    """
-    if not COMPONENTS_DATA:
-        return 0 # Cannot estimate without data
-
-    base_chassis_price_usd = COMPONENTS_DATA.get("base_laptop_price", 200)
-    estimated_price_usd = base_chassis_price_usd
-
-    cpu_lower = cpu.lower()
-    cpu_tiers = COMPONENTS_DATA.get("cpu_tiers", {})
-    # Sort CPU tiers by keyword length in descending order to prioritize more specific matches
-    sorted_cpu_keywords = sorted(cpu_tiers.keys(), key=len, reverse=True)
-
-    for keyword in sorted_cpu_keywords:
-        if keyword in cpu_lower:
-            estimated_price_usd += cpu_tiers[keyword].get("price", 0)
-            break
-
-    gpu_lower = gpu.lower()
-    gpu_tiers = COMPONENTS_DATA.get("gpu_tiers", {})
-    # Sort GPU tiers by keyword length in descending order to prioritize more specific matches
-    sorted_gpu_keywords = sorted(gpu_tiers.keys(), key=len, reverse=True)
-
-    for keyword in sorted_gpu_keywords:
-        if keyword in gpu_lower:
-            estimated_price_usd += gpu_tiers[keyword].get("price", 0)
-            break
-
-    # RAM cost
-    estimated_price_usd += ram * 4
-
-    # SSD cost (if ssd == 0, treat as 512GB for calculation to avoid skew)
-    ssd_calc_gb = ssd if ssd > 0 else 512
-    estimated_price_usd += (ssd_calc_gb / 128) * 10
-
-    return int(estimated_price_usd * MDL_USD_RATE)
-
-def estimate_fallback_score(cpu: str, gpu: str, ram: int) -> int:
-    """
-    Estimates a synthetic performance score (1-100) based on extracted components
-    using data from COMPONENTS_DATA.
-    """
-    cpu_str = str(cpu).lower()
-    if any(m in cpu_str for m in ('m1', 'm2', 'm3', 'm4')):
-        if any(p in cpu_str for p in ('pro', 'max', 'ultra')):
-            return 90
-        return 80
-
-    if not COMPONENTS_DATA:
-        return 0 # Cannot estimate without data
-
-    score = 0
-
-    cpu_lower = cpu.lower()
-    cpu_tiers = COMPONENTS_DATA.get("cpu_tiers", {})
-    sorted_cpu_keywords = sorted(cpu_tiers.keys(), key=len, reverse=True)
-
-    for keyword in sorted_cpu_keywords:
-        if keyword in cpu_lower:
-            score += cpu_tiers[keyword].get("score", 0)
-            break
-
-    gpu_lower = gpu.lower()
-    gpu_tiers = COMPONENTS_DATA.get("gpu_tiers", {})
-    sorted_gpu_keywords = sorted(gpu_tiers.keys(), key=len, reverse=True)
-
-    for keyword in sorted_gpu_keywords:
-        if keyword in gpu_lower:
-            score += gpu_tiers[keyword].get("score", 0)
-            break
-
-    if ram >= 16:
-        score += 3
-
-    return max(1, min(100, score))
+# Fallback estimation now lives in estimation.py (shared with send_telegram.py).
 
 
 # ================= 3. DATABASE MANAGER =================
@@ -301,8 +201,8 @@ class LaptopAnalyzer:
 
     @staticmethod
     def _save_json_cache(path: str, data: dict):
-        with open(path, 'w') as f:
-            json.dump(data, f, indent=2)
+        with open(path, 'w', encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
     def run(self):  # noqa: C901
         log.info("Starting analysis v3...")

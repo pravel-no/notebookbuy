@@ -74,6 +74,20 @@ MDL_USD_RATE = 18.0
 # --- End Fallback Tiers and Estimation Logic ---
 
 
+def infer_ssd_gb(ssd: int | None, year_est: int | None, is_apple: bool = False) -> int:
+    """Single source of truth for the "missing SSD" heuristic.
+
+    If an SSD size was detected, return it unchanged. Otherwise, for devices
+    from 2021 onward assume a sensible default (256 GB for Apple, 512 GB for
+    the rest); older/unknown devices stay at 0.
+    """
+    if ssd and ssd > 0:
+        return ssd
+    if year_est and year_est >= 2021:
+        return 256 if is_apple else 512
+    return 0
+
+
 def estimate_year_from_cpu(cpu_name: str) -> int | None:
     if not cpu_name:
         return None
@@ -195,9 +209,8 @@ def score_laptop(
     ssd_val = ssd
     year = year_est or (current_year - 7) # Default to 7 years old if year not estimated
 
-    # SSD heuristic: If year >= 2021 and SSD is 0, assume 512GB
-    if year >= 2021 and ssd_val == 0:
-        ssd_val = 512
+    # SSD heuristic (shared with parser/telegram): assume a default if missing.
+    ssd_val = infer_ssd_gb(ssd_val, year)
 
     # Round price to nearest integer
     effective_price = round(price)
