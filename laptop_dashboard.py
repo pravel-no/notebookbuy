@@ -130,6 +130,7 @@ def load_data() -> pd.DataFrame:
             c.gpu_score
         FROM ads a
         JOIN analysis_cache c ON CAST(a.id AS TEXT) = CAST(c.id AS TEXT)
+        WHERE a.parsed_at >= datetime(substr((SELECT MAX(parsed_at) FROM ads), 1, 19), '-2 hours')
     """
     try:
         with sqlite3.connect(DB_NAME) as conn:

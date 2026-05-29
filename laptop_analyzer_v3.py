@@ -310,7 +310,9 @@ class LaptopAnalyzer:
 
         with sqlite3.connect(DB_NAME) as conn:
             ads = conn.execute(
-                "SELECT id, title, price, description, url FROM ads ORDER BY id DESC LIMIT ?",
+                "SELECT id, title, price, description, url FROM ads "
+                "WHERE parsed_at >= datetime(substr((SELECT MAX(parsed_at) FROM ads), 1, 19), '-2 hours') "
+                "ORDER BY id DESC LIMIT ?",
                 (ADS_ANALYZE_LIMIT,),
             ).fetchall()
             cached_data = self.db.get_cache()
