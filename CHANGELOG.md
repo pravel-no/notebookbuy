@@ -5,6 +5,32 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Unified the component-based fallback price/score logic into a single
+  `estimation.py` shared by the analyzer and the Telegram notifier, which had
+  silently diverged.
+- Centralized the "missing SSD" heuristic in `scoring.infer_ssd_gb` (was
+  duplicated across parser, scoring, and notifier).
+- Decomposed `lappars.fetch_and_process` into small, unit-tested helpers
+  (`parse_graphql_ad`, `_html_fallback_description`).
+- `send_telegram.py` now uses `logging` instead of `print`.
+
+### Fixed
+
+- Urgency wording ("срочно", "urgent", "без торга") no longer flags a listing
+  as broken and triggers the heavy value penalty.
+- `daily_scrape.yml` no longer references a non-existent `requirements.txt`.
+- Register an explicit SQLite datetime adapter to silence the Python 3.12
+  deprecation warning without changing stored timestamp format.
+
+### Added
+
+- Tests for price tracking, GraphQL parsing, fallback estimation, benchmark
+  lookup, and the SSD heuristic (suite: 36 → 63).
+
 ## [1.0.0] - 2026-05-17
 
 ### Added

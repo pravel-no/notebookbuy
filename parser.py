@@ -7,7 +7,12 @@ Precompiles patterns for CPU, GPU, RAM, and SSD at import time so
 import re
 from typing import Any
 
-from scoring import classify_laptop, estimate_year_from_cpu, normalize_cpu_name
+from scoring import (
+    classify_laptop,
+    estimate_year_from_cpu,
+    infer_ssd_gb,
+    normalize_cpu_name,
+)
 
 
 # Precompiled regular expressions for performance
@@ -97,21 +102,21 @@ class LaptopParser:
         else:
             year_est = LaptopParser.estimate_year(cpu) # Fallback to CPU-based estimation
 
-        if ssd_val == 0 and year_est and year_est >= 2021:
-            if re.search(r'm[1234]', cpu, re.IGNORECASE) or any(w in full_text for w in ['apple', 'macbook']):
-                ssd_val = 256
-            else:
-                ssd_val = 512
+        is_apple = bool(re.search(r'm[1234]', cpu, re.IGNORECASE)) or any(
+            w in full_text for w in ['apple', 'macbook']
+        )
+        ssd_val = infer_ssd_gb(ssd_val, year_est, is_apple)
 
         return {
             "cpu": cpu,
             "gpu": gpu_match.group(0).strip() if gpu_match else "integrated",
             "ram": int(ram_match.group(1)) if ram_match else 0,
             "ssd": ssd_val,
+            # Only genuine defect/lock signals. Urgency words ("срочно", "urgent",
+            # "без торга") are NOT defects and must not trigger the broken penalty.
             "is_broken": any(k in full_text for k in [
                 "запчаст", "дефект", "не работ", "разбит экран", "треснут экран", "битый экран", "экран не работ",
-                "не включ", "schimb", "piese", "defect", "parola", "blocat", "заблокирован", "на запчасти",
-                "без торга", "срочно", "продам срочно", "urgent"
+                "не включ", "piese", "defect", "parola", "blocat", "заблокирован", "на запчасти",
             ]),
             "year_est": year_est
         }

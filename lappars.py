@@ -176,6 +176,78 @@ def _description_from_ad(ad: dict) -> str:
     return ""
 
 
+# Structured spec features exposed by the GraphQL API, appended to the body so
+# the downstream regex parser can pick them up as [Label: value] tags.
+_SPEC_FEATURES = [
+    ("ssd_feature", "SSD"),
+    ("hdd_type_feature", "HDD Type"),
+    ("screen_size_feature", "Screen"),
+    ("cpu_model_feature", "CPU Model"),
+    ("gpu_model_feature", "GPU Model"),
+    ("ram_size_feature", "RAM Volume"),
+    ("gpu_type_feature", "GPU Type"),
+    ("region_feature", "Region"),
+]
+
+
+def _spec_tags_from_features(ad: dict) -> list[str]:
+    tags = []
+    for feat_name, label in _SPEC_FEATURES:
+        feat = ad.get(feat_name)
+        if isinstance(feat, dict) and feat.get("value"):
+            val = feat["value"]
+            if isinstance(val, dict) and val.get("translated"):
+                tags.append(f"[{label}: {val['translated']}]")
+    return tags
+
+
+def _price_mdl_from_ad(ad: dict) -> float:
+    """Parse the price feature and convert EUR/USD amounts to MDL."""
+    price_feature = ad.get("price")
+    if not (isinstance(price_feature, dict) and price_feature.get("value")):
+        return 0.0
+    val_str = str(price_feature["value"]).lower()
+    digits = re.findall(r"\d+", val_str.replace("\xa0", "").replace(" ", ""))
+    if not digits:
+        return 0.0
+    raw_price = float("".join(digits))
+    if "€" in val_str or "eur" in val_str:
+        return raw_price * EUR_TO_MDL
+    if "$" in val_str or "usd" in val_str:
+        return raw_price * USD_TO_MDL
+    return raw_price
+
+
+def _image_url_from_ad(ad: dict) -> str:
+    """Build the first image URL from the GraphQL images feature (id 14)."""
+    images_feature = ad.get("images")
+    if isinstance(images_feature, dict) and images_feature.get("value"):
+        try:
+            img_vals = json.loads(images_feature["value"])
+            if isinstance(img_vals, list) and img_vals:
+                return f"https://i.999.md/m/{img_vals[0]}.jpg"
+        except Exception:
+            pass
+    return ""
+
+
+def parse_graphql_ad(ad: dict) -> dict:
+    """Turn a raw GraphQL ad node into a normalized dict (no network/DB)."""
+    ad_id = int(ad["id"])
+    body = _description_from_ad(ad)
+    tags = _spec_tags_from_features(ad)
+    if tags:
+        body = f"{body} {' '.join(tags)}"
+    return {
+        "id": ad_id,
+        "title": ad.get("title", "").strip(),
+        "url": f"https://999.md/ru/{ad_id}",
+        "price": _price_mdl_from_ad(ad),
+        "body": body,
+        "image_url": _image_url_from_ad(ad),
+    }
+
+
 # ================= 2. HTML FETCHER (Legacy/Fallback) =================
 def get_ad_html(url: str, retries: int = 3) -> str:
     """Fetch raw HTML of an ad page. Used when GraphQL body is empty."""
@@ -197,8 +269,68 @@ def get_ad_html(url: str, retries: int = 3) -> str:
     return ""
 
 
+def _html_fallback_description(ad_url: str) -> str:
+    """Scrape the ad page for a description when GraphQL returns an empty body."""
+    raw_html = get_ad_html(ad_url)
+    if not raw_html:
+        return ""
+    try:
+        soup = BeautifulSoup(raw_html, "html.parser")
+        desc_div = soup.find(itemprop="description")
+        if desc_div:
+            body_content = desc_div.get_text(" ", strip=True)
+        else:
+            # Common 999.md description containers, newest class name first.
+            container = (
+                soup.find("div", class_="styles_description__body__qh1qw")
+                or soup.find("div", class_="ad-description")
+                or soup.find("div", class_="description-text")
+                or soup.find("div", class_="description-body")
+            )
+            if container:
+                body_content = container.get_text(" ", strip=True)
+            else:
+                for unwanted_tag in soup(["script", "style", "header", "nav", "footer", "aside"]):
+                    unwanted_tag.extract()
+                main_content = (
+                    soup.find("main")
+                    or soup.find("article")
+                    or soup.find("div", class_=re.compile(r"content|description|body", re.IGNORECASE))
+                )
+                if main_content:
+                    body_content = main_content.get_text(" ", strip=True)
+                else:
+                    body_content = soup.body.get_text(" ", strip=True) if soup.body else ""
+
+        spec_tags = []
+        for key, label in [
+            ("Объем жесткого диска", "SSD"),
+            ("Тип жесткого диска", "HDD Type"),
+            ("Диагональ дисплея", "Screen"),
+            ("Модель процессора", "CPU Model"),
+            ("Модель видеокарты", "GPU Model"),
+            ("Объем RAM", "RAM Volume"),
+            ("Тип видеокарты", "GPU Type"),
+        ]:
+            for li in soup.find_all("li"):
+                if key in li.get_text():
+                    link = li.find("a")
+                    if link:
+                        spec_tags.append(f"[{label}: {link.get_text(strip=True)}]")
+                        break
+        div_map = soup.find("div", class_=re.compile(r"styles_map__address", re.IGNORECASE))
+        if div_map:
+            spec_tags.append(f"[Region: {div_map.get_text(strip=True)}]")
+        if spec_tags:
+            body_content = f"{body_content} {' '.join(spec_tags)}"
+        return body_content
+    except Exception as e:
+        log.warning(f"Error parsing HTML for {ad_url}: {e}")
+        return raw_html
+
+
 # ================= 3. MAIN FETCH LOOP =================
-def fetch_and_process(region: str = "balti"):  # noqa: C901
+def fetch_and_process(region: str = "balti"):
     """Fetch all laptop ads from 999.md and upsert them into the local database."""
     log.info("Checking for new/updated ads...")
 
@@ -249,126 +381,20 @@ def fetch_and_process(region: str = "balti"):  # noqa: C901
             cursor = conn.cursor()
 
             for ad in ads:
-                ad_id = int(ad['id'])
-                title = ad.get('title', '').strip()
-                ad_url = f"https://999.md/ru/{ad_id}"
-                body_content = _description_from_ad(ad)
-
-                # Append structured spec features if present in GraphQL features
-                spec_tags = []
-                for feat_name, label in [
-                    ("ssd_feature", "SSD"),
-                    ("hdd_type_feature", "HDD Type"),
-                    ("screen_size_feature", "Screen"),
-                    ("cpu_model_feature", "CPU Model"),
-                    ("gpu_model_feature", "GPU Model"),
-                    ("ram_size_feature", "RAM Volume"),
-                    ("gpu_type_feature", "GPU Type"),
-                    ("region_feature", "Region")
-                ]:
-                    feat = ad.get(feat_name)
-                    if isinstance(feat, dict) and feat.get("value"):
-                        val = feat["value"]
-                        if isinstance(val, dict) and val.get("translated"):
-                            spec_tags.append(f"[{label}: {val['translated']}]")
-                if spec_tags:
-                    body_content = f"{body_content} {' '.join(spec_tags)}"
-
-                # Convert price to MDL
-                price = 0.0
-                price_feature = ad.get('price')
-                if isinstance(price_feature, dict) and price_feature.get('value'):
-                    val_str = str(price_feature['value']).lower()
-                    digits = re.findall(r'\d+', val_str.replace('\xa0', '').replace(' ', ''))
-                    if digits:
-                        raw_price = float(''.join(digits))
-                        if '€' in val_str or 'eur' in val_str:
-                            price = raw_price * EUR_TO_MDL
-                        elif '$' in val_str or 'usd' in val_str:
-                            price = raw_price * USD_TO_MDL
-                        else:
-                            price = raw_price
+                parsed = parse_graphql_ad(ad)
+                ad_id, title, ad_url = parsed["id"], parsed["title"], parsed["url"]
+                price, body_content = parsed["price"], parsed["body"]
 
                 old_price = get_current_price(cursor, ad_id)
 
-                # Parse image URL from GraphQL images feature (id: 14)
-                image_url = ""
-                images_feature = ad.get('images')
-                if isinstance(images_feature, dict) and images_feature.get('value'):
-                    try:
-                        img_vals = json.loads(images_feature['value'])
-                        if isinstance(img_vals, list) and img_vals:
-                            first_img_key = img_vals[0]
-                            image_url = f"https://i.999.md/m/{first_img_key}.jpg"
-                    except Exception:
-                        pass
-
                 # If no description in GraphQL (rare), try to fetch it via HTML
                 if not body_content and (old_price is None or abs(price - old_price) / max(old_price, 1) > 0.01):
-                    raw_html = get_ad_html(ad_url)
-                    if raw_html:
-                        try:
-                            soup = BeautifulSoup(raw_html, "html.parser")
-                            desc_div = soup.find(itemprop="description")
-                            if desc_div:
-                                body_content = desc_div.get_text(" ", strip=True)
-                            else:
-                                # Try to find a specific description container on 999.md
-                                # Common class names for main description content
-                                description_container = soup.find('div', class_='styles_description__body__qh1qw') or \
-                                                        soup.find('div', class_='ad-description') or \
-                                                        soup.find('div', class_='description-text') or \
-                                                        soup.find('div', class_='description-body')
-
-                                if description_container:
-                                    body_content = description_container.get_text(" ", strip=True)
-                                else:
-                                    # Fallback: more robust text extraction (previous logic)
-                                    # Remove script, style, header, nav, footer, aside elements
-                                    for unwanted_tag in soup(["script", "style", "header", "nav", "footer", "aside"]):
-                                        unwanted_tag.extract()
-
-                                    # Try to find a common main content container
-                                    main_content = soup.find('main') or soup.find('article') or soup.find('div', class_=re.compile(r'content|description|body', re.IGNORECASE))
-
-                                    if main_content:
-                                        body_content = main_content.get_text(" ", strip=True)
-                                    else:
-                                        # If no specific main content, get text from body after cleaning
-                                        body_content = soup.body.get_text(" ", strip=True) if soup.body else ""
-
-                            # Extract structured HTML features if present
-                            spec_tags = []
-                            for key, label in [
-                                ("Объем жесткого диска", "SSD"),
-                                ("Тип жесткого диска", "HDD Type"),
-                                ("Диагональ дисплея", "Screen"),
-                                ("Модель процессора", "CPU Model"),
-                                ("Модель видеокарты", "GPU Model"),
-                                ("Объем RAM", "RAM Volume"),
-                                ("Тип видеокарты", "GPU Type")
-                            ]:
-                                for li in soup.find_all("li"):
-                                    if key in li.get_text():
-                                        link = li.find("a")
-                                        if link:
-                                            spec_tags.append(f"[{label}: {link.get_text(strip=True)}]")
-                                            break
-                            # Extract Region from HTML map address if present
-                            div_map = soup.find("div", class_=re.compile(r"styles_map__address", re.IGNORECASE))
-                            if div_map:
-                                spec_tags.append(f"[Region: {div_map.get_text(strip=True)}]")
-                            if spec_tags:
-                                body_content = f"{body_content} {' '.join(spec_tags)}"
-
-                        except Exception as e:
-                            log.warning(f"Error parsing HTML for {ad_url}: {e}")
-                            body_content = raw_html # Fallback to raw HTML if parsing fails
+                    body_content = _html_fallback_description(ad_url) or body_content
 
                 ad_data = {
                     'ID': ad_id, 'Заголовок': title, 'Цена': price,
                     'Валюта': 'MDL', 'Ссылка': ad_url, 'HTML_страницы': body_content,
-                    'Изображение': image_url,
+                    'Изображение': parsed["image_url"],
                 }
 
                 result = save_or_update_ad(cursor, ad_data)

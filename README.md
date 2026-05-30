@@ -47,7 +47,8 @@ notebookbuy/
 ├── laptop_dashboard.py     # Streamlit analytics dashboard
 ├── parser.py               # Precompiled regex for CPU/GPU/RAM/SSD
 ├── benchmarks.py           # Passmark data fetch, cache, and fuzzy search
-├── scoring.py              # Value-score formula + laptop classification
+├── scoring.py              # Value-score formula, classification, SSD heuristic
+├── estimation.py           # Shared component-based fallback price/score
 ├── ai_service.py           # Gemini AI structured extraction
 ├── currency.py             # Dynamic exchange rate fetching
 ├── db.py                   # SQLite schema, migrations, context manager
@@ -59,7 +60,10 @@ notebookbuy/
 ├── .env.example            # Template for environment variables
 ├── tests/
 │   ├── test_parser.py      # Regex extraction tests
-│   ├── test_scoring.py     # Scoring & classification tests
+│   ├── test_scoring.py     # Scoring, classification & SSD heuristic tests
+│   ├── test_estimation.py  # Fallback price/score estimation tests
+│   ├── test_benchmarks.py  # Passmark fuzzy-match lookup tests
+│   ├── test_lappars.py     # Price-tracking upsert & GraphQL parse tests
 │   ├── test_currency.py    # Exchange rate fallback tests
 │   └── test_db.py          # Schema creation & migration tests
 └── .github/workflows/
