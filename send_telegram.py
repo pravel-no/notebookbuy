@@ -8,7 +8,7 @@ from datetime import datetime
 import requests
 
 # Import shared configurations and scoring
-from app_config import DB_NAME
+from app_config import DB_NAME, TELEGRAM_MIN_VALUE_SCORE, TELEGRAM_TOP_N
 from estimation import estimate_fallback_price, estimate_fallback_score
 from scoring import MDL_USD_RATE, infer_ssd_gb, is_unwanted_ad, score_laptop
 
@@ -19,9 +19,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger(__name__)
-
-# Minimum value_score for a laptop to be included in the Telegram digest.
-MIN_VALUE_SCORE = 100
 
 # Retrieve tokens from environment variables
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -150,8 +147,8 @@ def process_deals(rows, price_cache, nbc_cache, components_data):
         # Smart runtime SSD fallback for display/processing
         ssd_val = _get_runtime_ssd(r, brand, title_lower)
 
-        # We want to filter for good value_score
-        if value_score >= MIN_VALUE_SCORE:
+        # Optional quality floor (default 0 = keep all, rank later).
+        if value_score >= TELEGRAM_MIN_VALUE_SCORE:
             deals.append({
                 'title': title,
                 'price': int(r['price']),
@@ -202,19 +199,19 @@ def main():
         log.info("No high-value laptop deals found today.")
         return
 
-    # 1. Moldova deals (all regions) - Top 5
-    moldova_deals = sorted(deals, key=lambda x: x['value_score'], reverse=True)[:5]
+    # 1. Moldova deals (all regions) - Top N
+    moldova_deals = sorted(deals, key=lambda x: x['value_score'], reverse=True)[:TELEGRAM_TOP_N]
 
-    # 2. Balti deals - Top 5
+    # 2. Balti deals - Top N
     balti_deals = [d for d in deals if d['region'] == "Бельцы"]
-    balti_deals = sorted(balti_deals, key=lambda x: x['value_score'], reverse=True)[:5]
+    balti_deals = sorted(balti_deals, key=lambda x: x['value_score'], reverse=True)[:TELEGRAM_TOP_N]
 
     # Format beautiful message
     message = "🔥 *ТОП ВЫГОДНЫХ НОУТБУКОВ 999.MD* 🔥\n"
     message += f"📅 _Дата отчета: {datetime.now().strftime('%d.%m.%Y %H:%M')}_\n\n"
 
     # Moldova Section
-    message += "🌍 *ВСЯ МОЛДОВА (ТОП-5)*\n"
+    message += f"🌍 *ВСЯ МОЛДОВА (ТОП-{TELEGRAM_TOP_N})*\n"
     message += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
     for idx, d in enumerate(moldova_deals, start=1):
         brand_emoji = "🍏" if d['brand'] == "Apple" else "💻"
@@ -229,7 +226,7 @@ def main():
         message += f" 🔗 [Открыть объявление]({d['url']})\n\n"
 
     # Balti Section
-    message += "\n🔔 *БЕЛЬЦЫ (ТОП-5)*\n"
+    message += f"\n🔔 *БЕЛЬЦЫ (ТОП-{TELEGRAM_TOP_N})*\n"
     message += "⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯\n"
     if balti_deals:
         for idx, d in enumerate(balti_deals, start=1):

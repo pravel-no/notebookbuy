@@ -55,4 +55,10 @@ ADS_ANALYZE_LIMIT = max(1, _env_int("ADS_ANALYZE_LIMIT", 500))
 PASSMARK_CACHE_DAYS = max(1, _env_int("PASSMARK_CACHE_DAYS", 7))
 WORLD_PRICE_TOP_N = max(0, _env_int("WORLD_PRICE_TOP_N", 10))
 
+# Telegram digest: how many deals per section, and an optional quality floor.
+# The floor defaults to 0 so the digest always shows the top-N best deals;
+# raise it to hide low value_score listings.
+TELEGRAM_TOP_N = max(1, _env_int("TELEGRAM_TOP_N", 5))
+TELEGRAM_MIN_VALUE_SCORE = max(0.0, _env_float("TELEGRAM_MIN_VALUE_SCORE", 0.0))
+
 DB_NAME = os.getenv("DB_NAME", "laptops_database.db")
